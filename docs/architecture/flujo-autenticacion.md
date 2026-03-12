@@ -1,7 +1,7 @@
-# Flujo de Autenticación Login y Política de Bloqueo de Cuentas
+# Flujo de Autenticación, Autorización por Roles y Aislamiento de Datos
 
-> **Fecha:** 2025-07-22  
-> **Dominio:** Seguridad — Autenticación, Autorización y Política de Bloqueo  
+> **Fecha:** 2025-07-22 (actualizado 2025-07-23 — HU 1.3)  
+> **Dominio:** Seguridad — Autenticación, Autorización RBAC, Política de Bloqueo y Aislamiento de Datos  
 > **Stack:** Java 24 · Spring Boot 4.0.3 · Spring Security · JJWT 0.12.6  
 > **Patrón base:** Arquitectura Hexagonal + CQRS + Mediador  
 > **Tipo de flujo:** Síncrono (sin operaciones asíncronas)  
@@ -13,18 +13,20 @@
 
 ### Descripción
 
-Este documento describe los flujos de negocio del módulo de autenticación del sistema BTG Pactual V2, cubriendo cuatro escenarios principales:
+Este documento describe los flujos de negocio del módulo de autenticación y autorización del sistema BTG Pactual V2, cubriendo seis escenarios principales:
 
 1. **Login exitoso end-to-end** — Autenticación por email/contraseña con emisión de JWT stateless.
 2. **Login fallido con bloqueo progresivo** — Incremento de intentos fallidos y bloqueo automático tras 3 intentos consecutivos.
 3. **Validación JWT transversal en requests protegidas** — Filtro de seguridad que intercepta y valida tokens Bearer en cada petición.
-4. **Desbloqueo administrativo** — Restauración de cuentas bloqueadas exclusivamente por un administrador.
+4. **Desbloqueo administrativo** — Restauración de cuentas bloqueadas exclusivamente por un administrador vía endpoint separado `/api/admin`.
+5. **Autorización por roles (RBAC)** — Protección de endpoints administrativos con `@PreAuthorize` habilitado por `@EnableMethodSecurity`. Rechazo HTTP 403 por rol insuficiente.
+6. **Aislamiento de datos en suscripción de fondos (prevención BOLA)** — El `clienteId` para rol `CLIENTE` se resuelve desde el JWT; solo `ADMINISTRADOR` puede operar en nombre de otro usuario.
 
 ### Alcance
 
-- **Proceso de negocio:** Autenticación de usuarios por email/contraseña con emisión de JWT stateless y política de bloqueo automático tras 3 intentos fallidos consecutivos. Desbloqueo solo por administrador.
-- **Puntos críticos de error:** Credenciales inválidas (401), cuenta bloqueada (403), token inválido/expirado (401 vía filtro).
-- **Catálogo de excepciones HTTP:** 400 (validación), 401 (credenciales/token inválido), 403 (cuenta bloqueada), 409 (conflicto), 422 (dominio).
+- **Proceso de negocio:** Autenticación de usuarios por email/contraseña con emisión de JWT stateless, política de bloqueo automático tras 3 intentos fallidos consecutivos, autorización por roles RBAC y aislamiento de datos en suscripción de fondos. Desbloqueo solo por administrador.
+- **Puntos críticos de error:** Credenciales inválidas (401), cuenta bloqueada (403), token inválido/expirado (401 vía filtro), 403 por rol insuficiente, 403 por acceso denegado a datos ajenos.
+- **Catálogo de excepciones HTTP:** 400 (validación), 401 (credenciales/token inválido), 403 (cuenta bloqueada / rol insuficiente / acceso denegado), 409 (conflicto), 422 (dominio).
 
 ### Componentes Involucrados
 
@@ -41,7 +43,10 @@ Este documento describe los flujos de negocio del módulo de autenticación del 
 | `PuertoHashContrasena` | Dominio (`domain/port/out/`) | Puerto de salida para verificación de hash de contraseña (BCrypt). |
 | `PuertoGenerarToken` | Dominio (`domain/port/out/`) | Puerto de salida para generación de tokens JWT. |
 | `ManejadorExcepcionesGlobal` | API (`api/handler/`) | Traduce excepciones de dominio/aplicación a respuestas HTTP con códigos de estado apropiados. |
-| `SecurityConfig` | Infraestructura (`infrastructure/config/`) | Configura la cadena de filtros de Spring Security, endpoints públicos/protegidos, política de sesiones stateless. |
+| `SecurityConfig` | Infraestructura (`infrastructure/config/`) | Configura la cadena de filtros de Spring Security, endpoints públicos/protegidos, política de sesiones stateless. Habilita `@EnableMethodSecurity`. |
+| `ControladorAdmin` | API (`api/controller/`) | Expone endpoint REST `PUT /api/admin/usuarios/{userId}/desbloquear`. Protegido con `@PreAuthorize("hasRole('ADMINISTRADOR')")`. |
+| `ControladorFondo` | API (`api/controller/`) | Expone endpoints REST `/api/fondos/*`. Método `resolverClienteId()` resuelve el `clienteId` desde el JWT para rol CLIENTE (prevención BOLA). |
+| `ExcepcionAccesoDenegado` | Dominio (`domain/exception/`) | Excepción de dominio para acceso denegado por aislamiento de datos (ej. intento de operar sobre datos ajenos). |
 
 ---
 
@@ -254,7 +259,7 @@ sequenceDiagram
 
 ### 4. Desbloqueo Administrativo
 
-Flujo de desbloqueo de una cuenta bloqueada, ejecutable únicamente por un usuario con rol `ADMINISTRADOR`.
+Flujo de desbloqueo de una cuenta bloqueada, ejecutable únicamente por un usuario con rol `ADMINISTRADOR`. El endpoint fue migrado de `ControladorAutenticacion` al nuevo `ControladorAdmin` en `/api/admin`, protegido con `@PreAuthorize("hasRole('ADMINISTRADOR')")` (habilitado por `@EnableMethodSecurity` en `SecurityConfig`).
 
 ```mermaid
 sequenceDiagram
@@ -262,14 +267,15 @@ sequenceDiagram
     participant SC as SecurityFilterChain
     participant Filtro as JwtFiltroAutenticacion
     participant JWT as JwtProveedor
-    participant Ctrl as ControladorAutenticacion
+    participant PreAuth as @PreAuthorize<br/>("hasRole('ADMINISTRADOR')")
+    participant Ctrl as ControladorAdmin
     participant Med as Mediador
     participant DH as DesbloqueoManejador
     participant Repo as PuertoRepositorioCliente
     participant Dom as Cliente (Domain)
     participant Exc as ManejadorExcepcionesGlobal
 
-    Admin->>SC: PUT /api/auth/desbloqueo/{clienteId}<br/>Authorization: Bearer {token_admin}
+    Admin->>SC: PUT /api/admin/usuarios/{userId}/desbloquear<br/>Authorization: Bearer {token_admin}
 
     SC->>Filtro: doFilterInternal()
     Filtro->>JWT: validarToken(token_admin)
@@ -278,12 +284,14 @@ sequenceDiagram
     JWT-->>Filtro: "ADMINISTRADOR"
     Note over Filtro: SecurityContext con<br/>ROLE_ADMINISTRADOR ✓
 
-    Filtro->>Ctrl: continuar cadena
+    Filtro->>PreAuth: continuar cadena
+    PreAuth->>PreAuth: hasRole('ADMINISTRADOR') ✓
+    PreAuth->>Ctrl: autorizado
 
-    Ctrl->>Med: enviar(DesbloqueoComando(clienteId))
+    Ctrl->>Med: enviar(DesbloqueoComando(userId))
     Med->>DH: manejar(DesbloqueoComando)
 
-    DH->>Repo: buscarPorId(clienteId)
+    DH->>Repo: buscarPorId(userId)
 
     alt Cliente encontrado
         Repo-->>DH: Optional<Cliente>
@@ -302,6 +310,83 @@ sequenceDiagram
         DH->>Exc: throw ExcepcionDominio
         Exc-->>Admin: HTTP 422 UNPROCESSABLE_ENTITY
     end
+```
+
+### 5. Rechazo por Rol Insuficiente (403 — Autorización RBAC)
+
+Flujo cuando un usuario autenticado con rol `CLIENTE` intenta acceder a un endpoint protegido con `@PreAuthorize("hasRole('ADMINISTRADOR')")`.
+
+```mermaid
+sequenceDiagram
+    actor Cliente as Cliente (rol CLIENTE)
+    participant SC as SecurityFilterChain
+    participant Filtro as JwtFiltroAutenticacion
+    participant JWT as JwtProveedor
+    participant PreAuth as @PreAuthorize<br/>("hasRole('ADMINISTRADOR')")
+    participant Exc as ManejadorExcepcionesGlobal
+
+    Cliente->>SC: PUT /api/admin/usuarios/{userId}/desbloquear<br/>Authorization: Bearer {token_cliente}
+
+    SC->>Filtro: doFilterInternal()
+    Filtro->>JWT: validarToken(token_cliente)
+    JWT-->>Filtro: true ✓
+    Filtro->>JWT: extraerRol(token_cliente)
+    JWT-->>Filtro: "CLIENTE"
+    Note over Filtro: SecurityContext con<br/>ROLE_CLIENTE ✓
+
+    Filtro->>PreAuth: continuar cadena
+    PreAuth->>PreAuth: hasRole('ADMINISTRADOR') ✗
+    PreAuth->>Exc: throw AccessDeniedException
+    Note over Exc: Spring Security<br/>AccessDeniedException
+    Exc-->>Cliente: HTTP 403 FORBIDDEN<br/>{"error": "No tiene permisos<br/>para realizar esta operación"}
+```
+
+### 6. Suscripción de Fondos con Aislamiento de Datos (Prevención BOLA)
+
+Flujo que muestra cómo `ControladorFondo.resolverClienteId()` previene el acceso a datos ajenos: un usuario con rol `CLIENTE` siempre opera con su propio ID extraído del JWT, mientras que solo un `ADMINISTRADOR` puede operar en nombre de otro usuario.
+
+```mermaid
+sequenceDiagram
+    actor User as Usuario Autenticado
+    participant SC as SecurityFilterChain
+    participant Filtro as JwtFiltroAutenticacion
+    participant JWT as JwtProveedor
+    participant Ctrl as ControladorFondo
+    participant Med as Mediador
+    participant Exc as ManejadorExcepcionesGlobal
+
+    Note over User,Exc: ── Caso A: CLIENTE suscribe fondo (clienteId del JWT) ──
+
+    User->>SC: POST /api/fondos/suscribir<br/>Authorization: Bearer {token_cliente}<br/>{fondoId, monto, clienteId: "otro-id"}
+    SC->>Filtro: doFilterInternal()
+    Filtro->>JWT: extraerUserId(token)
+    JWT-->>Filtro: "mi-cliente-id"
+    Filtro->>JWT: extraerRol(token)
+    JWT-->>Filtro: "CLIENTE"
+    Note over Filtro: SecurityContext:<br/>principal="mi-cliente-id"<br/>ROLE_CLIENTE
+
+    Filtro->>Ctrl: continuar cadena
+    Ctrl->>Ctrl: resolverClienteId(auth, "otro-id")
+    Note over Ctrl: esAdmin = false<br/>→ usa auth.getName()<br/>= "mi-cliente-id"<br/>(ignora clienteId del body)
+
+    Ctrl->>Med: enviar(FondoComando(<br/>"mi-cliente-id", fondoId, monto))
+    Med-->>Ctrl: FondoResultado
+    Ctrl-->>User: HTTP 201 CREATED<br/>{suscripción con mi-cliente-id}
+
+    Note over User,Exc: ── Caso B: ADMIN suscribe fondo en nombre de otro ──
+
+    User->>SC: POST /api/fondos/suscribir<br/>Authorization: Bearer {token_admin}<br/>{fondoId, monto, clienteId: "otro-id"}
+    SC->>Filtro: doFilterInternal()
+    Filtro->>JWT: extraerRol(token)
+    JWT-->>Filtro: "ADMINISTRADOR"
+
+    Filtro->>Ctrl: continuar cadena
+    Ctrl->>Ctrl: resolverClienteId(auth, "otro-id")
+    Note over Ctrl: esAdmin = true<br/>→ usa clienteId del body<br/>= "otro-id"
+
+    Ctrl->>Med: enviar(FondoComando(<br/>"otro-id", fondoId, monto))
+    Med-->>Ctrl: FondoResultado
+    Ctrl-->>User: HTTP 201 CREATED<br/>{suscripción con otro-id}
 ```
 
 ---
@@ -326,7 +411,7 @@ stateDiagram-v2
 
     IntentoFallido2 --> Bloqueada : Login fallido (intento 3)<br/>incrementarIntentosFallidos()<br/>bloquearCuenta()
 
-    Bloqueada --> Activa : PUT /api/auth/desbloqueo/{id}<br/>desbloquearCuenta()<br/>(Solo ADMINISTRADOR)
+    Bloqueada --> Activa : PUT /api/admin/usuarios/{id}/desbloquear<br/>desbloquearCuenta()<br/>(Solo ADMINISTRADOR via @PreAuthorize)
 
     Bloqueada --> Bloqueada : Intento de login<br/>HTTP 403 FORBIDDEN<br/>(sin incrementar contador)
 
@@ -364,7 +449,7 @@ stateDiagram-v2
 | IntentoFallido (1 o 2) | Login exitoso | `contraseña válida` | Activa | `resetearIntentosFallidos()` → `intentosFallidosLogin = 0` |
 | IntentoFallido 2 | Login fallido | `intentos >= maxIntentosFallidos (3)` | Bloqueada | `incrementarIntentosFallidos()` + `bloquearCuenta()` |
 | Bloqueada | Intento de login | `estaBloqueada() == true` | Bloqueada | HTTP 403, sin modificar estado |
-| Bloqueada | Desbloqueo admin | `PUT /desbloqueo/{id}` por `ADMINISTRADOR` | Activa | `desbloquearCuenta()` → `bloqueada = false`, `intentosFallidosLogin = 0` |
+| Bloqueada | Desbloqueo admin | `PUT /api/admin/usuarios/{id}/desbloquear` por `ADMINISTRADOR` (`@PreAuthorize`) | Activa | `desbloquearCuenta()` → `bloqueada = false`, `intentosFallidosLogin = 0` |
 
 ---
 
@@ -384,7 +469,9 @@ stateDiagram-v2
 |---|---|---|---|
 | `/api/auth/login` | POST | Público | Autenticación por email/contraseña |
 | `/api/auth/registro` | POST | Público | Registro de nuevos usuarios |
-| `/api/auth/desbloqueo/{clienteId}` | PUT | Autenticado (ADMINISTRADOR) | Desbloqueo de cuenta |
+| `/api/admin/usuarios/{userId}/desbloquear` | PUT | Autenticado (`@PreAuthorize("hasRole('ADMINISTRADOR')")`) | Desbloqueo de cuenta (migrado desde `/api/auth`) |
+| `/api/fondos/suscribir` | POST | Autenticado (Bearer JWT) | Suscripción a fondo. `clienteId` resuelto desde JWT para CLIENTE (prevención BOLA) |
+| `/api/fondos/{fondoId}` | GET | Autenticado (Bearer JWT) | Consulta de fondo por ID |
 | `/swagger-ui/**` | GET | Público | Documentación OpenAPI |
 | `/v3/api-docs/**` | GET | Público | Especificación OpenAPI JSON |
 | Todos los demás | * | Autenticado (Bearer JWT) | Requieren token válido |
@@ -397,6 +484,7 @@ stateDiagram-v2
 | Sesiones | `STATELESS` | Sin estado en servidor; autenticación por token en cada request |
 | Entry Point | `HttpStatusEntryPoint(UNAUTHORIZED)` | Retorna 401 sin redirección, adecuado para API REST |
 | Filtro JWT | Before `UsernamePasswordAuthenticationFilter` | Intercepta antes del filtro estándar de Spring Security |
+| Method Security | `@EnableMethodSecurity` | Habilita `@PreAuthorize` en controllers para autorización granular por roles (RBAC) |
 
 ---
 
@@ -414,7 +502,9 @@ stateDiagram-v2
 | Tokens rechazados / minuto | `JwtFiltroAutenticacion` | Contador | Tokens inválidos o expirados — picos indican tokens comprometidos |
 | Latencia de login (p50, p95, p99) | `LoginManejador` | Histograma | Tiempo de respuesta del flujo completo de login |
 | Errores 401 / minuto | `ManejadorExcepcionesGlobal` | Contador | Credenciales o tokens inválidos |
-| Errores 403 / minuto | `ManejadorExcepcionesGlobal` | Contador | Intentos de acceso con cuenta bloqueada |
+| Errores 403 / minuto (cuenta bloqueada) | `ManejadorExcepcionesGlobal` | Contador | Intentos de acceso con cuenta bloqueada |
+| Errores 403 / minuto (rol insuficiente) | `ManejadorExcepcionesGlobal` | Contador | Intentos de acceso a endpoints protegidos con `@PreAuthorize` sin rol adecuado (`AccessDeniedException`) |
+| Errores 403 / minuto (acceso denegado BOLA) | `ManejadorExcepcionesGlobal` | Contador | Intentos de acceso a datos de otro usuario (`ExcepcionAccesoDenegado`) |
 
 ### Puntos de Logging Recomendados
 
@@ -426,7 +516,10 @@ stateDiagram-v2
 | `WARN` | `LoginManejador` | Intento de login en cuenta bloqueada | `clienteId`, `email` (enmascarado), IP origen |
 | `INFO` | `DesbloqueoManejador` | Cuenta desbloqueada | `clienteId`, `adminId` (del token), timestamp |
 | `WARN` | `JwtFiltroAutenticacion` | Token inválido o expirado | URI solicitada, tipo de error (firma/expiración), IP origen |
+| `WARN` | `ManejadorExcepcionesGlobal` | Acceso denegado por rol insuficiente | `userId` (del token), endpoint solicitado, rol actual, IP origen |
+| `WARN` | `ManejadorExcepcionesGlobal` | Acceso denegado por aislamiento de datos | `userId` (del token), `clienteId` intentado, IP origen |
 | `DEBUG` | `JwtProveedor` | Token generado | `clienteId`, `rol`, `exp` |
+| `DEBUG` | `ControladorFondo` | Resolución de clienteId | `rol`, `clienteId` resuelto (JWT vs body) |
 
 ### Alertas Recomendadas
 
@@ -520,7 +613,7 @@ Feature: Autenticación de usuarios por email y contraseña
   Scenario: Administrador desbloquea cuenta bloqueada
     Given un cliente con ID "cliente-uuid-123" con cuenta bloqueada
     And un administrador autenticado con token JWT válido con rol "ADMINISTRADOR"
-    When el administrador envía PUT /api/auth/desbloqueo/cliente-uuid-123
+    When el administrador envía PUT /api/admin/usuarios/cliente-uuid-123/desbloquear
     Then el sistema responde con HTTP 200 OK
     And el body contiene el ID del cliente, su email y mensaje "Cuenta desbloqueada exitosamente"
     And la cuenta del cliente ya no está bloqueada
@@ -528,8 +621,40 @@ Feature: Autenticación de usuarios por email y contraseña
 
   Scenario: Desbloqueo de cliente inexistente
     Given un administrador autenticado con token JWT válido con rol "ADMINISTRADOR"
-    When el administrador envía PUT /api/auth/desbloqueo/cliente-inexistente
+    When el administrador envía PUT /api/admin/usuarios/cliente-inexistente/desbloquear
     Then el sistema responde con HTTP 422 UNPROCESSABLE_ENTITY
+```
+
+### Escenario 5: Rechazo por Rol Insuficiente (Autorización RBAC)
+
+```gherkin
+  Scenario: Cliente intenta desbloquear cuenta (rol insuficiente)
+    Given un usuario autenticado con token JWT válido con rol "CLIENTE"
+    When el usuario envía PUT /api/admin/usuarios/otro-uuid/desbloquear
+    Then @PreAuthorize("hasRole('ADMINISTRADOR')") rechaza la petición
+    And ManejadorExcepcionesGlobal captura AccessDeniedException
+    And el sistema responde con HTTP 403 FORBIDDEN
+    And el body contiene {"error": "No tiene permisos para realizar esta operación"}
+```
+
+### Escenario 6: Aislamiento de Datos en Suscripción de Fondos (Prevención BOLA)
+
+```gherkin
+  Scenario: Cliente suscribe fondo — clienteId se toma del JWT (ignora body)
+    Given un usuario autenticado con token JWT con rol "CLIENTE" y sub "mi-cliente-id"
+    When el usuario envía POST /api/fondos/suscribir con body {fondoId, monto, clienteId: "otro-id"}
+    Then ControladorFondo.resolverClienteId() detecta rol CLIENTE
+    And usa auth.getName() = "mi-cliente-id" (ignora "otro-id" del body)
+    And la suscripción se crea con clienteId = "mi-cliente-id"
+    And el sistema responde con HTTP 201 CREATED
+
+  Scenario: Administrador suscribe fondo en nombre de otro cliente
+    Given un usuario autenticado con token JWT con rol "ADMINISTRADOR"
+    When el usuario envía POST /api/fondos/suscribir con body {fondoId, monto, clienteId: "otro-id"}
+    Then ControladorFondo.resolverClienteId() detecta rol ADMINISTRADOR
+    And usa el clienteId del body = "otro-id"
+    And la suscripción se crea con clienteId = "otro-id"
+    And el sistema responde con HTTP 201 CREATED
 ```
 
 ### Matriz de Cobertura de Pruebas
@@ -545,9 +670,12 @@ Feature: Autenticación de usuarios por email y contraseña
 | Token inválido en request protegida | Error path | 401 | — | `JwtFiltroAutenticacion`, `JwtProveedor` |
 | Token expirado en request protegida | Error path | 401 | — | `JwtFiltroAutenticacion`, `JwtProveedor` |
 | Token ausente en request protegida | Error path | 401 | — | `JwtFiltroAutenticacion`, `SecurityConfig` |
-| Desbloqueo exitoso | Happy path | 200 | — | `DesbloqueoManejador`, `PuertoRepositorioCliente`, `Cliente.desbloquearCuenta()` |
-| Desbloqueo cliente inexistente | Error path | 422 | `ExcepcionDominio` | `DesbloqueoManejador`, `PuertoRepositorioCliente` |
+| Desbloqueo exitoso | Happy path | 200 | — | `ControladorAdmin`, `@PreAuthorize`, `DesbloqueoManejador`, `PuertoRepositorioCliente`, `Cliente.desbloquearCuenta()` |
+| Desbloqueo cliente inexistente | Error path | 422 | `ExcepcionDominio` | `ControladorAdmin`, `DesbloqueoManejador`, `PuertoRepositorioCliente` |
 | Validación de campos null/vacíos | Validation | 400 | `MethodArgumentNotValidException` | `ControladorAutenticacion`, Bean Validation |
+| Rechazo por rol insuficiente (RBAC) | Error path | 403 | `AccessDeniedException` | `@PreAuthorize`, `ManejadorExcepcionesGlobal` |
+| Suscripción fondo — CLIENTE (clienteId del JWT) | Happy path | 201 | — | `ControladorFondo.resolverClienteId()`, `Mediador`, `FondoComando` |
+| Suscripción fondo — ADMIN (clienteId del body) | Happy path | 201 | — | `ControladorFondo.resolverClienteId()`, `Mediador`, `FondoComando` |
 
 ---
 
@@ -571,7 +699,7 @@ Feature: Autenticación de usuarios por email y contraseña
 | **Síntoma** | `POST /api/auth/login` retorna 403 incluso con contraseña correcta |
 | **Causa probable** | La cuenta fue bloqueada tras 3 intentos fallidos consecutivos |
 | **Diagnóstico** | Verificar `cliente.estaBloqueada()` y `cliente.getIntentosFallidosLogin()`. Buscar en logs el evento de bloqueo con el `clienteId`. |
-| **Resolución** | Ejecutar desbloqueo administrativo: `PUT /api/auth/desbloqueo/{clienteId}` con token de administrador. |
+| **Resolución** | Ejecutar desbloqueo administrativo: `PUT /api/admin/usuarios/{userId}/desbloquear` con token de administrador. |
 
 #### 3. HTTP 401 — Token Inválido en Request Protegida
 
@@ -595,10 +723,28 @@ Feature: Autenticación de usuarios por email y contraseña
 
 | Aspecto | Detalle |
 |---|---|
-| **Síntoma** | `PUT /api/auth/desbloqueo/{clienteId}` retorna 401 o 403 |
-| **Causa probable** | Token del administrador expirado, rol incorrecto, o `clienteId` inválido |
-| **Diagnóstico** | Verificar que el token tiene claim `rol: ADMINISTRADOR`. Verificar que el `clienteId` existe en el repositorio. |
+| **Síntoma** | `PUT /api/admin/usuarios/{userId}/desbloquear` retorna 401 o 403 |
+| **Causa probable** | Token del administrador expirado, rol incorrecto (`CLIENTE` en vez de `ADMINISTRADOR`), o `userId` inválido |
+| **Diagnóstico** | Verificar que el token tiene claim `rol: ADMINISTRADOR`. La anotación `@PreAuthorize("hasRole('ADMINISTRADOR')")` en `ControladorAdmin` rechaza cualquier otro rol con `AccessDeniedException` → 403. Verificar que el `userId` existe en el repositorio. |
 | **Resolución** | Re-autenticarse como administrador. Verificar que el UUID del cliente es correcto. |
+
+#### 6. HTTP 403 — Rol Insuficiente (Autorización RBAC)
+
+| Aspecto | Detalle |
+|---|---|
+| **Síntoma** | Request a endpoint protegido con `@PreAuthorize` retorna 403 con mensaje "No tiene permisos para realizar esta operación" |
+| **Causa probable** | El token JWT del usuario tiene un rol que no cumple la condición del `@PreAuthorize` (ej. `CLIENTE` intentando acceder a `/api/admin/*`) |
+| **Diagnóstico** | Decodificar el JWT para verificar el claim `rol`. Revisar que `@EnableMethodSecurity` está presente en `SecurityConfig`. Verificar la anotación `@PreAuthorize` en el controller destino. |
+| **Resolución** | Autenticarse con un usuario que tenga el rol requerido. Si el usuario debería tener el rol, verificar la asignación de roles en el registro. |
+
+#### 7. HTTP 403 — Acceso Denegado por Aislamiento de Datos (BOLA)
+
+| Aspecto | Detalle |
+|---|---|
+| **Síntoma** | Operación sobre fondos retorna 403 con mensaje dinámico de `ExcepcionAccesoDenegado` |
+| **Causa probable** | Un usuario con rol `CLIENTE` intentó operar sobre datos que no le pertenecen. Nota: con la implementación actual de `resolverClienteId()`, el controller previene esto silenciosamente usando el ID del JWT, por lo que esta excepción se lanzaría en capas inferiores si se detecta inconsistencia. |
+| **Diagnóstico** | Verificar el `clienteId` en el JWT vs el recurso solicitado. Revisar logs de `ControladorFondo` para la resolución de `clienteId`. |
+| **Resolución** | Asegurar que el cliente opera solo sobre sus propios datos. Solo `ADMINISTRADOR` puede operar en nombre de otro usuario. |
 
 ### Catálogo de Excepciones HTTP
 
@@ -607,7 +753,9 @@ Feature: Autenticación de usuarios por email y contraseña
 | 400 | `MethodArgumentNotValidException` | `ControladorAutenticacion` (Bean Validation) | Campos requeridos ausentes o formato inválido | Corregir payload según validaciones del `LoginComando` |
 | 401 | `ExcepcionCredencialesInvalidas` | `LoginManejador` | Email no encontrado o contraseña incorrecta | Verificar credenciales y reintentar (con precaución por bloqueo) |
 | 401 | `ExcepcionTokenInvalido` | `JwtFiltroAutenticacion` / `ManejadorExcepcionesGlobal` | Token JWT con firma inválida o expirado | Re-autenticarse vía `/api/auth/login` |
-| 403 | `ExcepcionCuentaBloqueada` | `LoginManejador` | Cuenta bloqueada tras superar intentos fallidos | Contactar administrador para desbloqueo |
+| 403 | `ExcepcionCuentaBloqueada` | `LoginManejador` | Cuenta bloqueada tras superar intentos fallidos | Contactar administrador para desbloqueo vía `/api/admin/usuarios/{userId}/desbloquear` |
+| 403 | `AccessDeniedException` | `@PreAuthorize` / `ManejadorExcepcionesGlobal` | Rol insuficiente para el endpoint protegido (ej. CLIENTE accediendo a `/api/admin/*`) | Autenticarse con usuario con rol adecuado |
+| 403 | `ExcepcionAccesoDenegado` | Capa de dominio / `ManejadorExcepcionesGlobal` | Intento de acceso a datos ajenos (aislamiento BOLA) | Solo operar sobre datos propios; ADMIN puede operar en nombre de otros |
 | 409 | `ExcepcionConflicto` | Manejadores de aplicación | Conflicto de estado (ej. email ya registrado) | Verificar estado actual del recurso |
 | 422 | `ExcepcionDominio` | Manejadores de aplicación | Violación de regla de negocio | Revisar precondiciones de la operación |
 
@@ -623,5 +771,9 @@ Feature: Autenticación de usuarios por email y contraseña
 | Código fuente — LoginManejador | `src/main/java/.../application/login/command/LoginManejador.java` | Implementación del flujo de login |
 | Código fuente — DesbloqueoManejador | `src/main/java/.../application/desbloqueo/command/DesbloqueoManejador.java` | Implementación del flujo de desbloqueo |
 | Código fuente — JwtFiltroAutenticacion | `src/main/java/.../infrastructure/security/JwtFiltroAutenticacion.java` | Filtro transversal de validación JWT |
-| Código fuente — SecurityConfig | `src/main/java/.../infrastructure/config/SecurityConfig.java` | Configuración de Spring Security |
-| Código fuente — ManejadorExcepcionesGlobal | `src/main/java/.../api/handler/ManejadorExcepcionesGlobal.java` | Mapeo de excepciones a códigos HTTP |
+| Código fuente — SecurityConfig | `src/main/java/.../infrastructure/config/SecurityConfig.java` | Configuración de Spring Security + `@EnableMethodSecurity` |
+| Código fuente — ManejadorExcepcionesGlobal | `src/main/java/.../api/handler/ManejadorExcepcionesGlobal.java` | Mapeo de excepciones a códigos HTTP (incluye `AccessDeniedException` y `ExcepcionAccesoDenegado`) |
+| Historia de Usuario 1.3 | `docs/stories/1.3.autorizacion-roles-aislamiento-datos.story.md` | Requisitos funcionales de autorización RBAC y aislamiento de datos |
+| Código fuente — ControladorAdmin | `src/main/java/.../api/controller/ControladorAdmin.java` | Endpoint de desbloqueo administrativo con `@PreAuthorize` |
+| Código fuente — ControladorFondo | `src/main/java/.../api/controller/ControladorFondo.java` | Suscripción de fondos con `resolverClienteId()` (prevención BOLA) |
+| Código fuente — ExcepcionAccesoDenegado | `src/main/java/.../domain/exception/ExcepcionAccesoDenegado.java` | Excepción de dominio para acceso denegado por aislamiento de datos |

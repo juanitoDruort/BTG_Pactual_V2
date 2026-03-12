@@ -14,13 +14,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -221,86 +219,6 @@ class ControladorAutenticacionE2ETest {
                             .content(cuerpoLogin))
                     .andExpect(status().isForbidden())
                     .andExpect(jsonPath("$.error").exists());
-        }
-    }
-
-    @Nested
-    @DisplayName("PUT /api/auth/desbloqueo/{clienteId}")
-    class DesbloqueoUsuario {
-
-        private String registrarYObtenerClienteId() throws Exception {
-            String cuerpo = new RegistroComandoBuilder().buildJson();
-            MvcResult resultado = mockMvc.perform(post("/api/auth/registro")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(cuerpo))
-                    .andExpect(status().isCreated())
-                    .andReturn();
-
-            String json = resultado.getResponse().getContentAsString();
-            return new com.fasterxml.jackson.databind.ObjectMapper().readTree(json).get("clienteId").asText();
-        }
-
-        private String loginYObtenerToken(String email, String contrasena) throws Exception {
-            String cuerpo = new LoginComandoBuilder()
-                    .conEmail(email)
-                    .conContrasena(contrasena)
-                    .buildJson();
-            MvcResult resultado = mockMvc.perform(post("/api/auth/login")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(cuerpo))
-                    .andExpect(status().isOk())
-                    .andReturn();
-
-            String json = resultado.getResponse().getContentAsString();
-            return new com.fasterxml.jackson.databind.ObjectMapper().readTree(json).get("token").asText();
-        }
-
-        @Test
-        @DisplayName("200 - desbloqueo exitoso → cuenta desbloqueada y login posterior exitoso")
-        void desbloqueoExitoso() throws Exception {
-            // Arrange — registrar usuario y bloquear cuenta
-            String clienteId = registrarYObtenerClienteId();
-            String cuerpoIncorrecto = new LoginComandoBuilder()
-                    .conContrasena("PasswordIncorrecto1!")
-                    .buildJson();
-
-            for (int i = 0; i < 3; i++) {
-                mockMvc.perform(post("/api/auth/login")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(cuerpoIncorrecto))
-                        .andExpect(status().isUnauthorized());
-            }
-
-            // Verificar cuenta bloqueada
-            mockMvc.perform(post("/api/auth/login")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(new LoginComandoBuilder().buildJson()))
-                    .andExpect(status().isForbidden());
-
-            // Registrar un segundo usuario para obtener token de admin
-            String cuerpoAdmin = new RegistroComandoBuilder()
-                    .conEmail("admin@email.com")
-                    .conDocumentoIdentidad("CC999888777")
-                    .buildJson();
-            mockMvc.perform(post("/api/auth/registro")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(cuerpoAdmin))
-                    .andExpect(status().isCreated());
-            String tokenAdmin = loginYObtenerToken("admin@email.com", "Pass1!");
-
-            // Act — desbloquear cuenta con token autenticado
-            mockMvc.perform(put("/api/auth/desbloqueo/" + clienteId)
-                            .header("Authorization", "Bearer " + tokenAdmin))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.clienteId").value(clienteId))
-                    .andExpect(jsonPath("$.mensaje").value("Cuenta desbloqueada exitosamente"));
-
-            // Assert — login exitoso después del desbloqueo
-            mockMvc.perform(post("/api/auth/login")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(new LoginComandoBuilder().buildJson()))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.token").isNotEmpty());
         }
     }
 }

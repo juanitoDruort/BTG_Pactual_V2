@@ -2,6 +2,8 @@ package btg_pactual_v1.btg_pactual_v2;
 
 import btg_pactual_v1.btg_pactual_v2.builder.LoginComandoBuilder;
 import btg_pactual_v1.btg_pactual_v2.builder.RegistroComandoBuilder;
+import btg_pactual_v1.btg_pactual_v2.domain.model.Cliente;
+import btg_pactual_v1.btg_pactual_v2.domain.model.Rol;
 import btg_pactual_v1.btg_pactual_v2.infrastructure.adapter.out.persistence.AdaptadorClienteEnMemoria;
 import btg_pactual_v1.btg_pactual_v2.infrastructure.adapter.out.persistence.AdaptadorSuscripcionEnMemoria;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,6 +18,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
@@ -66,7 +69,7 @@ class ControladorFondoE2ETest {
 
     @Nested
     @DisplayName("POST /api/fondos/suscribir")
-    @WithMockUser
+    @WithMockUser(username = "cliente-1", roles = "CLIENTE")
     class SuscribirFondo {
 
         @Test
@@ -158,6 +161,7 @@ class ControladorFondoE2ETest {
 
         @Test
         @DisplayName("422 - cliente no existe → ExcepcionDominio")
+        @WithMockUser(username = "cliente-inexistente", roles = "CLIENTE")
         void clienteNoExiste() throws Exception {
             String cuerpo = objectMapper.writeValueAsString(Map.of(
                     "clienteId", "cliente-inexistente",
@@ -272,6 +276,128 @@ class ControladorFondoE2ETest {
             mockMvc.perform(get("/api/fondos/fondo-inexistente"))
                     .andExpect(status().isUnprocessableEntity())
                     .andExpect(jsonPath("$.error").value("Fondo no encontrado: fondo-inexistente"));
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Aislamiento de Datos — clienteId del JWT
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("Aislamiento de datos — clienteId resuelto del JWT")
+    class AislamientoDatos {
+
+        private String registrarYObtenerClienteId(String email, String documento) throws Exception {
+            String cuerpo = new RegistroComandoBuilder()
+                    .conEmail(email)
+                    .conDocumentoIdentidad(documento)
+                    .buildJson();
+            MvcResult resultado = mockMvc.perform(post("/api/auth/registro")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(cuerpo))
+                    .andExpect(status().isCreated())
+                    .andReturn();
+
+            return objectMapper.readTree(resultado.getResponse().getContentAsString())
+                    .get("clienteId").asText();
+        }
+
+        private void promoverAAdministrador(String clienteId) {
+            Cliente cliente = adaptadorCliente.buscarPorId(clienteId).orElseThrow();
+            adaptadorCliente.guardar(new Cliente(
+                    cliente.getId(), cliente.getNombre(), cliente.getSaldo(),
+                    cliente.getEmail(), cliente.getTelefono(), cliente.getDocumentoIdentidad(),
+                    cliente.getContrasenaHash(), Rol.ADMINISTRADOR,
+                    cliente.isCuentaBloqueada(), cliente.getIntentosFallidosLogin(),
+                    cliente.getFechaRegistro()));
+        }
+
+        private String loginYObtenerToken(String email) throws Exception {
+            String cuerpo = new LoginComandoBuilder()
+                    .conEmail(email)
+                    .buildJson();
+            MvcResult resultado = mockMvc.perform(post("/api/auth/login")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(cuerpo))
+                    .andExpect(status().isOk())
+                    .andReturn();
+
+            return objectMapper.readTree(resultado.getResponse().getContentAsString())
+                    .get("token").asText();
+        }
+
+        @Test
+        @DisplayName("201 - CLIENTE suscribe fondo propio → clienteId del JWT")
+        void clienteSuscribeFondoPropio() throws Exception {
+            // Arrange
+            String clienteId = registrarYObtenerClienteId("cliente.propio@email.com", "CC111222333");
+            String token = loginYObtenerToken("cliente.propio@email.com");
+
+            String cuerpo = objectMapper.writeValueAsString(Map.of(
+                    "clienteId", clienteId,
+                    "fondoId", "fondo-1",
+                    "monto", 75000
+            ));
+
+            // Act & Assert
+            mockMvc.perform(post("/api/fondos/suscribir")
+                            .header("Authorization", "Bearer " + token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(cuerpo))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.clienteId").value(clienteId))
+                    .andExpect(jsonPath("$.fondoId").value("fondo-1"));
+        }
+
+        @Test
+        @DisplayName("201 - CLIENTE envía clienteId de otro en body → sistema usa JWT (prevención BOLA)")
+        void clienteEnviaIdDeOtroPeroSistemaUsaJwt() throws Exception {
+            // Arrange — registrar dos usuarios
+            String clienteIdA = registrarYObtenerClienteId("userA@email.com", "CC111000111");
+            String clienteIdB = registrarYObtenerClienteId("userB@email.com", "CC222000222");
+            String tokenA = loginYObtenerToken("userA@email.com");
+
+            // Body con clienteId de B, pero token de A
+            String cuerpo = objectMapper.writeValueAsString(Map.of(
+                    "clienteId", clienteIdB,
+                    "fondoId", "fondo-1",
+                    "monto", 75000
+            ));
+
+            // Act & Assert — suscripción se crea para A (JWT), NO para B (body ignorado)
+            mockMvc.perform(post("/api/fondos/suscribir")
+                            .header("Authorization", "Bearer " + tokenA)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(cuerpo))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.clienteId").value(clienteIdA));
+        }
+
+        @Test
+        @DisplayName("201 - ADMINISTRADOR suscribe fondo en nombre de cliente → usa clienteId del body")
+        void adminSuscribeEnNombreDeCliente() throws Exception {
+            // Arrange — registrar cliente
+            String clienteId = registrarYObtenerClienteId("cliente@email.com", "CC111222333");
+
+            // Registrar admin y promover
+            String adminId = registrarYObtenerClienteId("admin@email.com", "CC999888777");
+            promoverAAdministrador(adminId);
+            String tokenAdmin = loginYObtenerToken("admin@email.com");
+
+            // Body con clienteId del cliente
+            String cuerpo = objectMapper.writeValueAsString(Map.of(
+                    "clienteId", clienteId,
+                    "fondoId", "fondo-1",
+                    "monto", 75000
+            ));
+
+            // Act & Assert — suscripción se crea para el cliente (body usado para ADMIN)
+            mockMvc.perform(post("/api/fondos/suscribir")
+                            .header("Authorization", "Bearer " + tokenAdmin)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(cuerpo))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.clienteId").value(clienteId));
         }
     }
 
