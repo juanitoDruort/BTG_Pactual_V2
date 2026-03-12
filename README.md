@@ -140,12 +140,12 @@ API Docs JSON: `http://localhost:8080/api-docs`
 # build/reports/tests/test/index.html
 ```
 
-**78 tests** distribuidos en:
+**90 tests** distribuidos en:
 
 - **Tests unitarios de dominio**: `ClienteTest` (7), `SuscripcionTest` (2)
-- **Tests unitarios de aplicación**: `RegistroManejadorTest` (4), `LoginManejadorTest` (5), `DesbloqueoManejadorTest` (2), `CancelacionManejadorTest` (2)
-- **Tests unitarios de infraestructura**: `JwtProveedorTest` (5), `AdaptadorEncriptacionAesTest` (7), `ServicioSuscripcionTest` (4)
-- **Tests E2E (integración)**: `ControladorAutenticacionE2ETest` (9), `ControladorFondoE2ETest` (19), `ControladorAdminE2ETest` (3), `ControladorSuscripcionE2ETest` (8) — levantan contexto Spring completo con MockMvc y seguridad real
+- **Tests unitarios de aplicación**: `RegistroManejadorTest` (4), `LoginManejadorTest` (5), `DesbloqueoManejadorTest` (2), `CancelacionManejadorTest` (2), `SuscripcionesVigentesManejadorTest` (4)
+- **Tests unitarios de infraestructura**: `JwtProveedorTest` (5), `AdaptadorEncriptacionAesTest` (7), `ServicioSuscripcionTest` (4), `AdaptadorSuscripcionEnMemoriaTest` (3)
+- **Tests E2E (integración)**: `ControladorAutenticacionE2ETest` (9), `ControladorFondoE2ETest` (19), `ControladorAdminE2ETest` (3), `ControladorSuscripcionE2ETest` (13) — levantan contexto Spring completo con MockMvc y seguridad real
 - **Context load**: `BtgPactualV2ApplicationTests` (1)
 
 ## Ejemplo de uso
@@ -236,7 +236,7 @@ curl http://localhost:8080/api/fondos/fondo-1 \
 | | 1.4 | Encriptación de datos sensibles en reposo (AES-256) | ✅ Implementada |
 | **Fondos** | 2.1 | Suscripción a fondo de inversión | ✅ Implementada |
 | | 2.2 | Cancelación de suscripción a fondo | ✅ Implementada |
-| | 2.3 | Consulta de suscripciones vigentes | Analizada |
+| | 2.3 | Consulta de suscripciones vigentes | ✅ Implementada |
 | | 2.4 | Notificación email/SMS al suscribir | Analizada |
 | **Datos** | 3 | Modelo de datos Azure Cosmos DB | Analizada |
 

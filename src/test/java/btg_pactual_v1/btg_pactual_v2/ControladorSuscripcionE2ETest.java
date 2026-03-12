@@ -22,6 +22,7 @@ import org.springframework.web.context.WebApplicationContext;
 import java.util.Map;
 
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -270,6 +271,103 @@ class ControladorSuscripcionE2ETest {
                             .header("Authorization", "Bearer " + tokenB))
                     .andExpect(status().isForbidden())
                     .andExpect(jsonPath("$.error").value("No tiene permisos para cancelar esta suscripción"));
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // GET /api/suscripciones/vigentes
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("GET /api/suscripciones/vigentes")
+    class ConsultarVigentes {
+
+        @Test
+        @DisplayName("200 - retorna suscripciones activas con nombreFondo (AC1, AC3)")
+        void retornaSuscripcionesActivas() throws Exception {
+            // Arrange
+            String clienteId = registrarYObtenerClienteId("vigentes@email.com", "CC111222333");
+            String token = loginYObtenerToken("vigentes@email.com");
+            suscribirFondo(token, clienteId, "fondo-1", 75000);
+            suscribirFondo(token, clienteId, "fondo-3", 50000);
+
+            // Act & Assert
+            mockMvc.perform(get("/api/suscripciones/vigentes")
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.length()").value(2))
+                    .andExpect(jsonPath("$[0].fondoId").value("fondo-1"))
+                    .andExpect(jsonPath("$[0].nombreFondo").value("FPV_BTG_PACTUAL_RECAUDADORA"))
+                    .andExpect(jsonPath("$[0].monto").value(75000))
+                    .andExpect(jsonPath("$[0].estado").value("ACTIVO"))
+                    .andExpect(jsonPath("$[0].suscripcionId").isNotEmpty())
+                    .andExpect(jsonPath("$[0].fechaSuscripcion").isNotEmpty())
+                    .andExpect(jsonPath("$[1].fondoId").value("fondo-3"))
+                    .andExpect(jsonPath("$[1].nombreFondo").value("DEUDAPRIVADA"));
+        }
+
+        @Test
+        @DisplayName("200 - lista vacía cuando no hay suscripciones vigentes (AC2)")
+        void retornaListaVacia() throws Exception {
+            // Arrange
+            registrarYObtenerClienteId("vacio@email.com", "CC111222333");
+            String token = loginYObtenerToken("vacio@email.com");
+
+            // Act & Assert
+            mockMvc.perform(get("/api/suscripciones/vigentes")
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.length()").value(0));
+        }
+
+        @Test
+        @DisplayName("200 - excluye suscripciones canceladas del listado (AC1)")
+        void excluyeCanceladas() throws Exception {
+            // Arrange
+            String clienteId = registrarYObtenerClienteId("mixto@email.com", "CC111222333");
+            String token = loginYObtenerToken("mixto@email.com");
+            String sus1 = suscribirFondo(token, clienteId, "fondo-1", 75000);
+            suscribirFondo(token, clienteId, "fondo-3", 50000);
+
+            // Cancelar una
+            mockMvc.perform(post("/api/suscripciones/" + sus1 + "/cancelar")
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk());
+
+            // Act & Assert — solo queda una vigente
+            mockMvc.perform(get("/api/suscripciones/vigentes")
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.length()").value(1))
+                    .andExpect(jsonPath("$[0].fondoId").value("fondo-3"));
+        }
+
+        @Test
+        @DisplayName("200 - aislamiento de datos entre clientes (AC4)")
+        void aislamientoEntreClientes() throws Exception {
+            // Arrange — cliente A suscribe a 2 fondos
+            String clienteIdA = registrarYObtenerClienteId("clienteA-vig@email.com", "CC111000111");
+            String tokenA = loginYObtenerToken("clienteA-vig@email.com");
+            suscribirFondo(tokenA, clienteIdA, "fondo-1", 75000);
+
+            // Cliente B suscribe a 1 fondo
+            String clienteIdB = registrarYObtenerClienteId("clienteB-vig@email.com", "CC222000222");
+            String tokenB = loginYObtenerToken("clienteB-vig@email.com");
+            suscribirFondo(tokenB, clienteIdB, "fondo-3", 50000);
+
+            // Act & Assert — B solo ve su propia suscripción
+            mockMvc.perform(get("/api/suscripciones/vigentes")
+                            .header("Authorization", "Bearer " + tokenB))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.length()").value(1))
+                    .andExpect(jsonPath("$[0].fondoId").value("fondo-3"));
+        }
+
+        @Test
+        @DisplayName("401 - acceso sin token → no autorizado")
+        void accesoSinToken() throws Exception {
+            mockMvc.perform(get("/api/suscripciones/vigentes"))
+                    .andExpect(status().isUnauthorized());
         }
     }
 }

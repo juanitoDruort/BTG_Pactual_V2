@@ -4,6 +4,7 @@ import btg_pactual_v1.btg_pactual_v2.domain.model.Suscripcion;
 import btg_pactual_v1.btg_pactual_v2.domain.port.out.PuertoRepositorioSuscripcion;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -35,5 +36,12 @@ public class AdaptadorSuscripcionEnMemoria implements PuertoRepositorioSuscripci
     @Override
     public Optional<Suscripcion> buscarPorId(String id) {
         return Optional.ofNullable(almacen.get(id));
+    }
+
+    @Override
+    public List<Suscripcion> buscarPorClienteIdYEstado(String clienteId, Suscripcion.Estado estado) {
+        return almacen.values().stream()
+                .filter(s -> s.getClienteId().equals(clienteId) && s.getEstado() == estado)
+                .toList();
     }
 }
