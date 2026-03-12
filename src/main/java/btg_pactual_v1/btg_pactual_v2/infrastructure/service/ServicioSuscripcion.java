@@ -1,7 +1,5 @@
 package btg_pactual_v1.btg_pactual_v2.infrastructure.service;
 
-import btg_pactual_v1.btg_pactual_v2.application.fondo.command.FondoComando;
-import btg_pactual_v1.btg_pactual_v2.application.fondo.command.FondoResultado;
 import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionDominio;
 import btg_pactual_v1.btg_pactual_v2.domain.model.Cliente;
 import btg_pactual_v1.btg_pactual_v2.domain.model.Fondo;
@@ -12,6 +10,7 @@ import btg_pactual_v1.btg_pactual_v2.domain.port.out.PuertoRepositorioSuscripcio
 import btg_pactual_v1.btg_pactual_v2.domain.service.IServicioSuscripcion;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -31,43 +30,34 @@ public class ServicioSuscripcion implements IServicioSuscripcion {
     }
 
     @Override
-    public FondoResultado suscribir(FondoComando comando) {
-        Fondo fondo = repositorioFondo.buscarPorId(comando.fondoId())
-                .orElseThrow(() -> new ExcepcionDominio("Fondo no encontrado: " + comando.fondoId()));
+    public Suscripcion suscribir(String clienteId, String fondoId, BigDecimal monto) {
+        Fondo fondo = repositorioFondo.buscarPorId(fondoId)
+                .orElseThrow(() -> new ExcepcionDominio("Fondo no encontrado: " + fondoId));
 
-        Cliente cliente = repositorioCliente.buscarPorId(comando.clienteId())
-                .orElseThrow(() -> new ExcepcionDominio("Cliente no encontrado: " + comando.clienteId()));
+        Cliente cliente = repositorioCliente.buscarPorId(clienteId)
+                .orElseThrow(() -> new ExcepcionDominio("Cliente no encontrado: " + clienteId));
 
-        if (comando.monto().compareTo(fondo.getMontoMinimo()) < 0) {
+        if (monto.compareTo(fondo.getMontoMinimo()) < 0) {
             throw new ExcepcionDominio(
                 "El monto mínimo para vincularse al fondo " + fondo.getNombre()
                 + " es $" + fondo.getMontoMinimo()
             );
         }
 
-        if (repositorioSuscripcion.existePorClienteIdYFondoId(comando.clienteId(), comando.fondoId())) {
+        if (repositorioSuscripcion.existePorClienteIdYFondoId(clienteId, fondoId)) {
             throw new ExcepcionDominio("El cliente ya está vinculado al fondo " + fondo.getNombre());
         }
 
-        cliente.descontarSaldo(comando.monto());
+        cliente.descontarSaldo(monto, fondo.getNombre());
         repositorioCliente.guardar(cliente);
 
-        Suscripcion suscripcion = repositorioSuscripcion.guardar(new Suscripcion(
+        return repositorioSuscripcion.guardar(new Suscripcion(
                 UUID.randomUUID().toString(),
-                comando.clienteId(),
-                comando.fondoId(),
-                comando.monto(),
+                clienteId,
+                fondoId,
+                monto,
                 Suscripcion.Estado.ACTIVO,
                 LocalDateTime.now()
         ));
-
-        return new FondoResultado(
-                suscripcion.getId(),
-                suscripcion.getClienteId(),
-                suscripcion.getFondoId(),
-                suscripcion.getMonto(),
-                suscripcion.getEstado().name(),
-                suscripcion.getFechaSuscripcion()
-        );
     }
 }

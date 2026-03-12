@@ -201,7 +201,7 @@ class ControladorFondoE2ETest {
                             .content(cuerpo))
                     .andExpect(status().isUnprocessableEntity())
                     .andExpect(jsonPath("$.error").value(
-                            "No tiene saldo disponible para vincularse al fondo. Saldo actual: 500000"
+                            "No tiene saldo disponible para vincularse al fondo FDO-ACCIONES. Saldo actual: 500000"
                     ));
         }
 

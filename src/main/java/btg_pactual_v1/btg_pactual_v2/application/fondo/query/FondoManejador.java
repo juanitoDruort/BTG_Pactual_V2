@@ -1,13 +1,12 @@
 package btg_pactual_v1.btg_pactual_v2.application.fondo.query;
 
-import btg_pactual_v1.btg_pactual_v2.application.mediador.Manejador;
+import btg_pactual_v1.btg_pactual_v2.domain.model.Fondo;
 import btg_pactual_v1.btg_pactual_v2.domain.service.IServicioFondo;
+
+import btg_pactual_v1.btg_pactual_v2.application.mediador.Manejador;
+
 import org.springframework.stereotype.Component;
 
-/**
- * CQRS — Query: orquesta la consulta de un fondo.
- * El Mediador lo resuelve automáticamente al recibir una FondoConsulta.
- */
 @Component("fondoConsultaManejador")
 public class FondoManejador implements Manejador<FondoConsulta, FondoResultado> {
 
@@ -19,7 +18,13 @@ public class FondoManejador implements Manejador<FondoConsulta, FondoResultado> 
 
     @Override
     public FondoResultado manejar(FondoConsulta consulta) {
-        return servicioFondo.obtener(consulta);
+        Fondo fondo = servicioFondo.obtener(consulta.fondoId());
+
+        return new FondoResultado(
+                fondo.getId(),
+                fondo.getNombre(),
+                fondo.getMontoMinimo(),
+                fondo.getCategoria());
     }
 
     @Override

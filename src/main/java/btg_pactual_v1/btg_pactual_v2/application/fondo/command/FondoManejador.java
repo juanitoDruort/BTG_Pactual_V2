@@ -1,13 +1,12 @@
 package btg_pactual_v1.btg_pactual_v2.application.fondo.command;
 
-import btg_pactual_v1.btg_pactual_v2.application.mediador.Manejador;
+import btg_pactual_v1.btg_pactual_v2.domain.model.Suscripcion;
 import btg_pactual_v1.btg_pactual_v2.domain.service.IServicioSuscripcion;
+
+import btg_pactual_v1.btg_pactual_v2.application.mediador.Manejador;
+
 import org.springframework.stereotype.Component;
 
-/**
- * CQRS — Command: orquesta la suscripción a un fondo.
- * El Mediador lo resuelve automáticamente al recibir un FondoComando.
- */
 @Component("fondoComandoManejador")
 public class FondoManejador implements Manejador<FondoComando, FondoResultado> {
 
@@ -19,7 +18,16 @@ public class FondoManejador implements Manejador<FondoComando, FondoResultado> {
 
     @Override
     public FondoResultado manejar(FondoComando comando) {
-        return servicioSuscripcion.suscribir(comando);
+        Suscripcion suscripcion = servicioSuscripcion.suscribir(
+                comando.clienteId(), comando.fondoId(), comando.monto());
+
+        return new FondoResultado(
+                suscripcion.getId(),
+                suscripcion.getClienteId(),
+                suscripcion.getFondoId(),
+                suscripcion.getMonto(),
+                suscripcion.getEstado().name(),
+                suscripcion.getFechaSuscripcion());
     }
 
     @Override

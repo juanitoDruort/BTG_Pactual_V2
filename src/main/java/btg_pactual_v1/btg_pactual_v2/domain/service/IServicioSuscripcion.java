@@ -1,9 +1,10 @@
 package btg_pactual_v1.btg_pactual_v2.domain.service;
 
-import btg_pactual_v1.btg_pactual_v2.application.fondo.command.FondoComando;
-import btg_pactual_v1.btg_pactual_v2.application.fondo.command.FondoResultado;
+import btg_pactual_v1.btg_pactual_v2.domain.model.Suscripcion;
+
+import java.math.BigDecimal;
 
 public interface IServicioSuscripcion {
 
-    FondoResultado suscribir(FondoComando comando);
+    Suscripcion suscribir(String clienteId, String fondoId, BigDecimal monto);
 }

@@ -16,10 +16,10 @@ public class Cliente {
         this.saldo = saldo;
     }
 
-    public void descontarSaldo(BigDecimal monto) {
+    public void descontarSaldo(BigDecimal monto, String nombreFondo) {
         if (this.saldo.compareTo(monto) < 0) {
             throw new ExcepcionDominio(
-                "No tiene saldo disponible para vincularse al fondo. Saldo actual: " + this.saldo
+                "No tiene saldo disponible para vincularse al fondo " + nombreFondo + ". Saldo actual: " + this.saldo
             );
         }
         this.saldo = this.saldo.subtract(monto);
