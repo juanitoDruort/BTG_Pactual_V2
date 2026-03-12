@@ -35,3 +35,13 @@ out/
 
 ### VS Code ###
 .vscode/
+
+# Ceiba Method workspace (auto-generated)
+.vscode/ceiba.code-workspace
+.venv
+
+# Método Ceiba - Auto-generated agents
+.github/agents/metodo-ceiba-*.agent.md
+
+# Método Ceiba - Auto-injected agent skills
+.github/skills/
