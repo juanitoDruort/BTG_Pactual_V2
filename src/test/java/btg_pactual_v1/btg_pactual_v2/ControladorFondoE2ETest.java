@@ -1,5 +1,7 @@
 package btg_pactual_v1.btg_pactual_v2;
 
+import btg_pactual_v1.btg_pactual_v2.builder.LoginComandoBuilder;
+import btg_pactual_v1.btg_pactual_v2.builder.RegistroComandoBuilder;
 import btg_pactual_v1.btg_pactual_v2.infrastructure.adapter.out.persistence.AdaptadorClienteEnMemoria;
 import btg_pactual_v1.btg_pactual_v2.infrastructure.adapter.out.persistence.AdaptadorSuscripcionEnMemoria;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,12 +14,14 @@ import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 
 import java.util.Map;
 
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -47,7 +51,7 @@ class ControladorFondoE2ETest {
 
     @BeforeAll
     void configurarMockMvc() {
-        mockMvc = MockMvcBuilders.webAppContextSetup(contexto).build();
+        mockMvc = MockMvcBuilders.webAppContextSetup(contexto).apply(springSecurity()).build();
     }
 
     @BeforeEach
@@ -62,6 +66,7 @@ class ControladorFondoE2ETest {
 
     @Nested
     @DisplayName("POST /api/fondos/suscribir")
+    @WithMockUser
     class SuscribirFondo {
 
         @Test
@@ -237,6 +242,7 @@ class ControladorFondoE2ETest {
 
     @Nested
     @DisplayName("GET /api/fondos/{fondoId}")
+    @WithMockUser
     class ObtenerFondo {
 
         @Test
@@ -266,6 +272,86 @@ class ControladorFondoE2ETest {
             mockMvc.perform(get("/api/fondos/fondo-inexistente"))
                     .andExpect(status().isUnprocessableEntity())
                     .andExpect(jsonPath("$.error").value("Fondo no encontrado: fondo-inexistente"));
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Protección JWT de endpoints
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("Protección JWT — endpoints protegidos")
+    class ProteccionJWT {
+
+        private String obtenerTokenValido() throws Exception {
+            String cuerpoRegistro = new RegistroComandoBuilder()
+                    .conEmail("jwt.test@email.com")
+                    .conDocumentoIdentidad("CC555666777")
+                    .buildJson();
+            mockMvc.perform(post("/api/auth/registro")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(cuerpoRegistro))
+                    .andExpect(status().isCreated());
+
+            String cuerpoLogin = new LoginComandoBuilder()
+                    .conEmail("jwt.test@email.com")
+                    .buildJson();
+            var resultado = mockMvc.perform(post("/api/auth/login")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(cuerpoLogin))
+                    .andExpect(status().isOk())
+                    .andReturn();
+
+            return new ObjectMapper().readTree(resultado.getResponse().getContentAsString())
+                    .get("token").asText();
+        }
+
+        @Test
+        @DisplayName("200 - acceso a endpoint protegido con token JWT válido")
+        void accesoConTokenValido() throws Exception {
+            // Arrange
+            String token = obtenerTokenValido();
+
+            // Act & Assert
+            mockMvc.perform(get("/api/fondos/fondo-1")
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").value("fondo-1"));
+        }
+
+        @Test
+        @DisplayName("401 - acceso sin token (cabecera Authorization ausente)")
+        void accesoSinToken() throws Exception {
+            mockMvc.perform(get("/api/fondos/fondo-1"))
+                    .andExpect(status().isUnauthorized());
+        }
+
+        @Test
+        @DisplayName("401 - acceso con token malformado")
+        void accesoConTokenMalformado() throws Exception {
+            mockMvc.perform(get("/api/fondos/fondo-1")
+                            .header("Authorization", "Bearer token.invalido.malformado"))
+                    .andExpect(status().isUnauthorized());
+        }
+
+        @Test
+        @DisplayName("401 - acceso con token expirado")
+        void accesoConTokenExpirado() throws Exception {
+            // Arrange — generar token con expiración en el pasado usando JJWT directamente
+            javax.crypto.SecretKey clave = io.jsonwebtoken.security.Keys.hmacShaKeyFor(
+                    "S3cur3K3yBTGPactual2025!xYz9Km4QwErTyU1OpAsD".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            String tokenExpirado = io.jsonwebtoken.Jwts.builder()
+                    .subject("cliente-1")
+                    .claim("rol", "CLIENTE")
+                    .issuedAt(new java.util.Date(System.currentTimeMillis() - 600000))
+                    .expiration(new java.util.Date(System.currentTimeMillis() - 300000))
+                    .signWith(clave)
+                    .compact();
+
+            // Act & Assert
+            mockMvc.perform(get("/api/fondos/fondo-1")
+                            .header("Authorization", "Bearer " + tokenExpirado))
+                    .andExpect(status().isUnauthorized());
         }
     }
 }

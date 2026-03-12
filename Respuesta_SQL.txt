@@ -1,3 +1,124 @@
+-- ============================================================
+--  SCRIPT DE CREACIÓN DE TABLAS - SQL Server
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- Tablas independientes (sin FK)
+-- ------------------------------------------------------------
+
+CREATE TABLE Cliente (
+    id            INT            NOT NULL,
+    nombre        VARCHAR(100)   NOT NULL,
+    apellidos     VARCHAR(100)   NOT NULL,
+    ciudad        VARCHAR(100)   NOT NULL,
+    CONSTRAINT pk_cliente PRIMARY KEY (id)
+);
+
+CREATE TABLE Sucursal (
+    id            INT            NOT NULL,
+    nombre        VARCHAR(100)   NOT NULL,
+    ciudad        VARCHAR(100)   NOT NULL,
+    CONSTRAINT pk_sucursal PRIMARY KEY (id)
+);
+
+CREATE TABLE Producto (
+    id            INT            NOT NULL,
+    nombre        VARCHAR(100)   NOT NULL,
+    tipoProducto  VARCHAR(100)   NOT NULL,
+    CONSTRAINT pk_producto PRIMARY KEY (id)
+);
+
+-- ------------------------------------------------------------
+-- Tablas de relación (con FK)
+-- ------------------------------------------------------------
+
+CREATE TABLE Inscripcion (
+    idProducto    INT   NOT NULL,
+    idCliente     INT   NOT NULL,
+    CONSTRAINT pk_inscripcion     PRIMARY KEY (idProducto, idCliente),
+    CONSTRAINT fk_insc_producto   FOREIGN KEY (idProducto) REFERENCES Producto(id),
+    CONSTRAINT fk_insc_cliente    FOREIGN KEY (idCliente)  REFERENCES Cliente(id)
+);
+
+CREATE TABLE Disponibilidad (
+    idSucursal    INT   NOT NULL,
+    idProducto    INT   NOT NULL,
+    CONSTRAINT pk_disponibilidad  PRIMARY KEY (idSucursal, idProducto),
+    CONSTRAINT fk_disp_sucursal   FOREIGN KEY (idSucursal) REFERENCES Sucursal(id),
+    CONSTRAINT fk_disp_producto   FOREIGN KEY (idProducto) REFERENCES Producto(id)
+);
+
+CREATE TABLE Visitan (
+    idSucursal    INT    NOT NULL,
+    idCliente     INT    NOT NULL,
+    fechaVisita   DATE   NOT NULL,
+    CONSTRAINT pk_visitan         PRIMARY KEY (idSucursal, idCliente),
+    CONSTRAINT fk_vis_sucursal    FOREIGN KEY (idSucursal) REFERENCES Sucursal(id),
+    CONSTRAINT fk_vis_cliente     FOREIGN KEY (idCliente)  REFERENCES Cliente(id)
+);
+
+
+-- ============================================================
+--  DATOS DE PRUEBA - SQL Server
+--  Objetivo: que la consulta "clientes con productos inscritos
+--  disponibles SOLO en sucursales que visitan" retorne resultados
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- Cliente
+-- ------------------------------------------------------------
+INSERT INTO Cliente VALUES (1, 'Carlos',   'Ramírez',  'Bogotá');
+INSERT INTO Cliente VALUES (2, 'Ana',      'Torres',   'Medellín');
+INSERT INTO Cliente VALUES (3, 'Luis',     'Gómez',    'Cali');
+
+-- ------------------------------------------------------------
+-- Sucursal
+-- ------------------------------------------------------------
+INSERT INTO Sucursal VALUES (1, 'Norte',   'Bogotá');
+INSERT INTO Sucursal VALUES (2, 'Sur',     'Bogotá');
+INSERT INTO Sucursal VALUES (3, 'Centro',  'Medellín');
+INSERT INTO Sucursal VALUES (4, 'Oeste',   'Cali');
+
+-- ------------------------------------------------------------
+-- Producto
+-- ------------------------------------------------------------
+INSERT INTO Producto VALUES (1, 'Laptop',   'Electrónico');
+INSERT INTO Producto VALUES (2, 'Tablet',   'Electrónico');
+INSERT INTO Producto VALUES (3, 'Monitor',  'Electrónico');
+
+-- ------------------------------------------------------------
+-- Disponibilidad
+-- ------------------------------------------------------------
+INSERT INTO Disponibilidad VALUES (1, 1);  -- Laptop  en Norte
+INSERT INTO Disponibilidad VALUES (2, 1);  -- Laptop  en Sur
+INSERT INTO Disponibilidad VALUES (3, 2);  -- Tablet  en Centro
+INSERT INTO Disponibilidad VALUES (1, 3);  -- Monitor en Norte
+INSERT INTO Disponibilidad VALUES (2, 3);  -- Monitor en Sur
+INSERT INTO Disponibilidad VALUES (4, 3);  -- Monitor en Oeste
+
+-- ------------------------------------------------------------
+-- Visitan
+-- ------------------------------------------------------------
+INSERT INTO Visitan VALUES (1, 1, '2024-01-10');  -- Carlos → Norte
+INSERT INTO Visitan VALUES (2, 1, '2024-01-15');  -- Carlos → Sur
+INSERT INTO Visitan VALUES (3, 2, '2024-02-05');  -- Ana    → Centro
+INSERT INTO Visitan VALUES (1, 3, '2024-02-10');  -- Luis   → Norte
+INSERT INTO Visitan VALUES (2, 3, '2024-02-12');  -- Luis   → Sur
+INSERT INTO Visitan VALUES (4, 3, '2024-02-14');  -- Luis   → Oeste
+
+-- ------------------------------------------------------------
+-- Inscripcion
+-- ------------------------------------------------------------
+INSERT INTO Inscripcion VALUES (1, 1);  -- Carlos → Laptop
+INSERT INTO Inscripcion VALUES (3, 1);  -- Carlos → Monitor
+INSERT INTO Inscripcion VALUES (2, 2);  -- Ana    → Tablet
+INSERT INTO Inscripcion VALUES (3, 3);  -- Luis   → Monitor
+INSERT INTO Inscripcion VALUES (1, 3);  -- Luis   → Laptop
+
+-- ------------------------------------------------------------
+-- Consulta
+-- ------------------------------------------------------------
+
 WITH total_disponibilidad AS (
     SELECT idProducto, COUNT(idSucursal) AS total_sucursales
     FROM disponibilidad

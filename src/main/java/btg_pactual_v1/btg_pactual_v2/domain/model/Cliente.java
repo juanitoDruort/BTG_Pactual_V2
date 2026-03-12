@@ -48,6 +48,27 @@ public class Cliente {
         this.saldo = this.saldo.add(monto);
     }
 
+    public void incrementarIntentosFallidos() {
+        this.intentosFallidosLogin++;
+    }
+
+    public void bloquearCuenta() {
+        this.cuentaBloqueada = true;
+    }
+
+    public void resetearIntentosFallidos() {
+        this.intentosFallidosLogin = 0;
+    }
+
+    public boolean estaBloqueada() {
+        return this.cuentaBloqueada;
+    }
+
+    public void desbloquearCuenta() {
+        this.cuentaBloqueada = false;
+        this.intentosFallidosLogin = 0;
+    }
+
     public String getId() { return id; }
     public String getNombre() { return nombre; }
     public BigDecimal getSaldo() { return saldo; }

@@ -1,7 +1,10 @@
 package btg_pactual_v1.btg_pactual_v2.api.handler;
 
 import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionConflicto;
+import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionCredencialesInvalidas;
+import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionCuentaBloqueada;
 import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionDominio;
+import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionTokenInvalido;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -36,5 +39,26 @@ public class ManejadorExcepcionesGlobal {
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(Map.of("errores", errores));
+    }
+
+    @ExceptionHandler(ExcepcionCredencialesInvalidas.class)
+    public ResponseEntity<Map<String, String>> manejarCredencialesInvalidas(ExcepcionCredencialesInvalidas ex) {
+        return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
+                .body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ExcepcionCuentaBloqueada.class)
+    public ResponseEntity<Map<String, String>> manejarCuentaBloqueada(ExcepcionCuentaBloqueada ex) {
+        return ResponseEntity
+                .status(HttpStatus.FORBIDDEN)
+                .body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ExcepcionTokenInvalido.class)
+    public ResponseEntity<Map<String, String>> manejarTokenInvalido(ExcepcionTokenInvalido ex) {
+        return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
+                .body(Map.of("error", ex.getMessage()));
     }
 }
