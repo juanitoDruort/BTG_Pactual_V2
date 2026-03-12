@@ -1,5 +1,6 @@
 package btg_pactual_v1.btg_pactual_v2.api.handler;
 
+import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionConflicto;
 import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionDominio;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +18,13 @@ public class ManejadorExcepcionesGlobal {
     public ResponseEntity<Map<String, String>> manejarExcepcionDominio(ExcepcionDominio ex) {
         return ResponseEntity
                 .status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ExcepcionConflicto.class)
+    public ResponseEntity<Map<String, String>> manejarExcepcionConflicto(ExcepcionConflicto ex) {
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
                 .body(Map.of("error", ex.getMessage()));
     }
 

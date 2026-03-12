@@ -9,4 +9,8 @@ public interface PuertoRepositorioCliente {
     Optional<Cliente> buscarPorId(String id);
 
     Cliente guardar(Cliente cliente);
+
+    Optional<Cliente> buscarPorEmail(String email);
+
+    boolean existePorEmail(String email);
 }
