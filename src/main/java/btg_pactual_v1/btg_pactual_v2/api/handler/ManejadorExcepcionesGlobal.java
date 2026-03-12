@@ -5,6 +5,7 @@ import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionConflicto;
 import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionCredencialesInvalidas;
 import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionCuentaBloqueada;
 import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionDominio;
+import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionEncriptacion;
 import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionTokenInvalido;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -76,5 +77,12 @@ public class ManejadorExcepcionesGlobal {
         return ResponseEntity
                 .status(HttpStatus.FORBIDDEN)
                 .body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ExcepcionEncriptacion.class)
+    public ResponseEntity<Map<String, String>> manejarEncriptacion(ExcepcionEncriptacion ex) {
+        return ResponseEntity
+                .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Error interno al procesar operación"));
     }
 }
