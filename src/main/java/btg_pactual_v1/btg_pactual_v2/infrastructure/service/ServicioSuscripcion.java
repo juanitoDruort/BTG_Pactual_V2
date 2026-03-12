@@ -4,11 +4,16 @@ import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionAccesoDenegado;
 import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionDominio;
 import btg_pactual_v1.btg_pactual_v2.domain.model.Cliente;
 import btg_pactual_v1.btg_pactual_v2.domain.model.Fondo;
+import btg_pactual_v1.btg_pactual_v2.domain.model.Notificacion;
 import btg_pactual_v1.btg_pactual_v2.domain.model.Suscripcion;
+import btg_pactual_v1.btg_pactual_v2.domain.port.out.PuertoNotificacion;
 import btg_pactual_v1.btg_pactual_v2.domain.port.out.PuertoRepositorioCliente;
 import btg_pactual_v1.btg_pactual_v2.domain.port.out.PuertoRepositorioFondo;
 import btg_pactual_v1.btg_pactual_v2.domain.port.out.PuertoRepositorioSuscripcion;
 import btg_pactual_v1.btg_pactual_v2.domain.service.IServicioSuscripcion;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -18,16 +23,21 @@ import java.util.UUID;
 @Service
 public class ServicioSuscripcion implements IServicioSuscripcion {
 
+    private static final Logger log = LoggerFactory.getLogger(ServicioSuscripcion.class);
+
     private final PuertoRepositorioFondo repositorioFondo;
     private final PuertoRepositorioCliente repositorioCliente;
     private final PuertoRepositorioSuscripcion repositorioSuscripcion;
+    private final PuertoNotificacion puertoNotificacion;
 
     public ServicioSuscripcion(PuertoRepositorioFondo repositorioFondo,
                                PuertoRepositorioCliente repositorioCliente,
-                               PuertoRepositorioSuscripcion repositorioSuscripcion) {
+                               PuertoRepositorioSuscripcion repositorioSuscripcion,
+                               PuertoNotificacion puertoNotificacion) {
         this.repositorioFondo = repositorioFondo;
         this.repositorioCliente = repositorioCliente;
         this.repositorioSuscripcion = repositorioSuscripcion;
+        this.puertoNotificacion = puertoNotificacion;
     }
 
     @Override
@@ -52,7 +62,7 @@ public class ServicioSuscripcion implements IServicioSuscripcion {
         cliente.descontarSaldo(monto, fondo.getNombre());
         repositorioCliente.guardar(cliente);
 
-        return repositorioSuscripcion.guardar(new Suscripcion(
+        Suscripcion suscripcion = repositorioSuscripcion.guardar(new Suscripcion(
                 UUID.randomUUID().toString(),
                 clienteId,
                 fondoId,
@@ -60,6 +70,21 @@ public class ServicioSuscripcion implements IServicioSuscripcion {
                 Suscripcion.Estado.ACTIVO,
                 LocalDateTime.now()
         ));
+
+        try {
+            puertoNotificacion.enviar(new Notificacion(
+                    cliente.getEmail(),
+                    Notificacion.Canal.EMAIL,
+                    fondo.getNombre(),
+                    monto,
+                    suscripcion.getFechaSuscripcion()
+            ));
+        } catch (Exception e) {
+            log.warn("Fallo al enviar notificación de suscripción para cliente {}: {}",
+                    clienteId, e.getMessage());
+        }
+
+        return suscripcion;
     }
 
     @Override

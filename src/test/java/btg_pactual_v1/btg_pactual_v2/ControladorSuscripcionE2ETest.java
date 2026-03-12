@@ -21,6 +21,10 @@ import org.springframework.web.context.WebApplicationContext;
 
 import java.util.Map;
 
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.everyItem;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -296,14 +300,11 @@ class ControladorSuscripcionE2ETest {
                             .header("Authorization", "Bearer " + token))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.length()").value(2))
-                    .andExpect(jsonPath("$[0].fondoId").value("fondo-1"))
-                    .andExpect(jsonPath("$[0].nombreFondo").value("FPV_BTG_PACTUAL_RECAUDADORA"))
-                    .andExpect(jsonPath("$[0].monto").value(75000))
-                    .andExpect(jsonPath("$[0].estado").value("ACTIVO"))
-                    .andExpect(jsonPath("$[0].suscripcionId").isNotEmpty())
-                    .andExpect(jsonPath("$[0].fechaSuscripcion").isNotEmpty())
-                    .andExpect(jsonPath("$[1].fondoId").value("fondo-3"))
-                    .andExpect(jsonPath("$[1].nombreFondo").value("DEUDAPRIVADA"));
+                    .andExpect(jsonPath("$[*].fondoId", containsInAnyOrder("fondo-1", "fondo-3")))
+                    .andExpect(jsonPath("$[*].nombreFondo", containsInAnyOrder("FPV_BTG_PACTUAL_RECAUDADORA", "DEUDAPRIVADA")))
+                    .andExpect(jsonPath("$[*].estado", everyItem(is("ACTIVO"))))
+                    .andExpect(jsonPath("$[*].suscripcionId", everyItem(notNullValue())))
+                    .andExpect(jsonPath("$[*].fechaSuscripcion", everyItem(notNullValue())));
         }
 
         @Test

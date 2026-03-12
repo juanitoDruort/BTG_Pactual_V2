@@ -13,8 +13,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
@@ -24,6 +27,7 @@ import org.springframework.web.context.WebApplicationContext;
 
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -478,6 +482,52 @@ class ControladorFondoE2ETest {
             mockMvc.perform(get("/api/fondos/fondo-1")
                             .header("Authorization", "Bearer " + tokenExpirado))
                     .andExpect(status().isUnauthorized());
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Notificación tras suscripción (fire-and-forget)
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("Notificación tras suscripción")
+    @ExtendWith(OutputCaptureExtension.class)
+    @WithMockUser(username = "cliente-1", roles = "CLIENTE")
+    class NotificacionSuscripcion {
+
+        @Test
+        @DisplayName("201 - suscripción exitosa genera notificación en consola")
+        void suscripcionExitosaGeneraNotificacion(CapturedOutput output) throws Exception {
+            String cuerpo = objectMapper.writeValueAsString(Map.of(
+                    "clienteId", "cliente-1",
+                    "fondoId",   "fondo-1",
+                    "monto",     75000
+            ));
+
+            mockMvc.perform(post("/api/fondos/suscribir")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(cuerpo))
+                    .andExpect(status().isCreated());
+
+            assertThat(output.getAll()).contains("[NOTIFICACION-EMAIL]");
+            assertThat(output.getAll()).contains("FPV_BTG_PACTUAL_RECAUDADORA");
+        }
+
+        @Test
+        @DisplayName("422 - suscripción fallida NO genera notificación")
+        void suscripcionFallidaNoGeneraNotificacion(CapturedOutput output) throws Exception {
+            String cuerpo = objectMapper.writeValueAsString(Map.of(
+                    "clienteId", "cliente-1",
+                    "fondoId",   "fondo-1",
+                    "monto",     50000
+            ));
+
+            mockMvc.perform(post("/api/fondos/suscribir")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(cuerpo))
+                    .andExpect(status().isUnprocessableEntity());
+
+            assertThat(output.getAll()).doesNotContain("[NOTIFICACION-EMAIL]");
         }
     }
 }
