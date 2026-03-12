@@ -45,14 +45,14 @@ boolean check(String a, String b) { ... }
 | Implementación de servicio | `Servicio*` | `ServicioSuscripcion`, `ServicioFondo` |
 | Adaptador de persistencia | `Adaptador*EnMemoria` / `Adaptador*CosmosDb` | `AdaptadorClienteEnMemoria` |
 | Adaptador de notificación | `AdaptadorNotificacion*` | `AdaptadorNotificacionEmail` |
-| Comando (CQRS) | `*Comando` | `FondoComando`, `CancelacionComando` |
-| Consulta (CQRS) | `*Consulta` | `FondoConsulta`, `SuscripcionesVigentesConsulta` |
-| Resultado (CQRS) | `*Resultado` | `FondoResultado`, `CancelacionResultado` |
+| Comando (CQRS — DTO de entrada) | `*Comando` | `FondoComando`, `RegistroComando`, `CancelacionComando` |
+| Consulta (CQRS — DTO de entrada) | `*Consulta` | `FondoConsulta`, `SuscripcionesVigentesConsulta` |
+| Resultado (CQRS — DTO de salida) | `*Resultado` | `FondoResultado`, `RegistroResultado`, `CancelacionResultado` |
 | Manejador (CQRS) | `*Manejador` | `FondoManejador`, `RegistroManejador` |
-| DTO de entrada | `Solicitud*` | `SolicitudSuscripcion`, `SolicitudRegistro` |
-| DTO de salida | `Respuesta*` | `RespuestaSuscripcion`, `RespuestaFondo` |
 | Controlador REST | `Controlador*` | `ControladorFondo`, `ControladorAutenticacion` |
 | Excepción de dominio | `ExcepcionDominio` | Única excepción de dominio |
+
+> **⚠️ IMPORTANTE:** Los DTOs de entrada y salida de la API son los **Comandos/Consultas y Resultados de la capa de aplicación**. NO existen DTOs separados en `api/dto/`. Los controladores reciben directamente `*Comando` o `*Consulta` como `@RequestBody` y retornan `*Resultado`. Esto permite que los manejadores CQRS tomen decisiones directamente sobre los objetos de entrada sin transformaciones intermedias.
 
 ```java
 // ✅ CORRECTO
@@ -72,22 +72,18 @@ Estructura hexagonal con CQRS. Cada clase en su propio archivo `.java`:
 
 ```
 src/main/java/btg_pactual_v1/btg_pactual_v2/
-├── api/
+├── api/                                    ← Sin DTOs propios
 │   ├── controller/
 │   │   ├── ControladorFondo.java
 │   │   └── ControladorAutenticacion.java
-│   ├── dto/
-│   │   ├── SolicitudSuscripcion.java
-│   │   ├── RespuestaSuscripcion.java
-│   │   └── RespuestaFondo.java
 │   └── handler/
 │       └── ManejadorExcepcionesGlobal.java
-├── application/
+├── application/                            ← DTOs (Comandos/Consultas/Resultados) viven aquí
 │   ├── fondo/
 │   │   ├── command/
-│   │   │   ├── FondoComando.java
+│   │   │   ├── FondoComando.java           ← DTO de entrada (antes SolicitudSuscripcion)
 │   │   │   ├── FondoManejador.java
-│   │   │   └── FondoResultado.java
+│   │   │   └── FondoResultado.java         ← DTO de salida (antes RespuestaSuscripcion)
 │   │   └── query/
 │   │       ├── FondoConsulta.java
 │   │       ├── FondoManejador.java
@@ -146,13 +142,13 @@ import java.util.*;  // wildcard prohibido
 import btg_pactual_v1.btg_pactual_v2.domain.model.*;  // wildcard prohibido
 ```
 
-#### Records para DTOs y Value Objects Inmutables
+#### Records para Comandos, Consultas, Resultados y Value Objects Inmutables
 
-Todo DTO de entrada/salida y objeto de comando/consulta/resultado **debe** ser un `record`:
+Todo Comando, Consulta y Resultado CQRS (que sirven como DTOs de entrada/salida de la API) **debe** ser un `record`. La capa de API NO tiene DTOs propios — los controladores reciben y retornan directamente estos records:
 
 ```java
-// ✅ CORRECTO — record para DTOs
-public record SolicitudSuscripcion(
+// ✅ CORRECTO — record para comando CQRS (sirve como DTO de entrada de la API)
+public record FondoComando(
         @NotBlank(message = "El clienteId es obligatorio")
         String clienteId,
 
@@ -164,10 +160,17 @@ public record SolicitudSuscripcion(
         BigDecimal monto
 ) {}
 
-// ✅ CORRECTO — record para comandos CQRS
-public record FondoComando(String clienteId, String fondoId, BigDecimal monto) {}
+// ✅ CORRECTO — record para resultado CQRS (sirve como DTO de salida de la API)
+public record FondoResultado(
+        String suscripcionId,
+        String clienteId,
+        String fondoId,
+        BigDecimal monto,
+        String estado,
+        LocalDateTime fechaSuscripcion
+) {}
 
-// ❌ INCORRECTO — clase mutable para DTO
+// ❌ INCORRECTO — DTO separado en api/dto/ (no crear DTOs en capa API)
 public class SolicitudSuscripcion {
     private String clienteId;
     public void setClienteId(String clienteId) { this.clienteId = clienteId; }
@@ -251,18 +254,16 @@ throw new MontoInsuficienteException(monto);  // sub-excepción innecesaria
 `ManejadorExcepcionesGlobal` centraliza la traducción de excepciones a respuestas HTTP. Los controladores **nunca** hacen try/catch.
 
 ```java
-// ✅ CORRECTO — el controlador deja que la excepción fluya
+// ✅ CORRECTO — el controlador recibe el Comando directamente y deja que la excepción fluya
 @PostMapping("/suscribir")
-public ResponseEntity<RespuestaSuscripcion> suscribir(@RequestBody @Valid SolicitudSuscripcion solicitud) {
-    FondoResultado resultado = mediador.enviar(
-            new FondoComando(solicitud.clienteId(), solicitud.fondoId(), solicitud.monto())
-    );
-    return ResponseEntity.status(HttpStatus.CREATED).body(/* mapeo */);
+public ResponseEntity<FondoResultado> suscribir(@RequestBody @Valid FondoComando comando) {
+    FondoResultado resultado = mediador.enviar(comando);
+    return ResponseEntity.status(HttpStatus.CREATED).body(resultado);
 }
 
 // ❌ INCORRECTO — try/catch en controlador
 @PostMapping("/suscribir")
-public ResponseEntity<?> suscribir(@RequestBody SolicitudSuscripcion solicitud) {
+public ResponseEntity<?> suscribir(@RequestBody FondoComando comando) {
     try {
         // lógica
     } catch (ExcepcionDominio e) {

@@ -1,0 +1,19 @@
+WITH total_disponibilidad AS (
+    SELECT idProducto, COUNT(idSucursal) AS total_sucursales
+    FROM disponibilidad
+    GROUP BY idProducto
+),
+sucursales_visitadas_con_producto AS (
+    SELECT v.idCliente, d.idProducto, COUNT(DISTINCT v.idSucursal) AS sucursales_visitadas
+    FROM disponibilidad d
+    INNER JOIN visitan v ON v.idSucursal = d.idSucursal
+    GROUP BY v.idCliente, d.idProducto
+)
+SELECT DISTINCT c.nombre
+FROM cliente c
+INNER JOIN inscripcion i ON i.idCliente = c.id
+INNER JOIN sucursales_visitadas_con_producto svp 
+    ON svp.idCliente = c.id AND svp.idProducto = i.idProducto
+INNER JOIN total_disponibilidad td 
+    ON td.idProducto = svp.idProducto
+WHERE svp.sucursales_visitadas = td.total_sucursales;

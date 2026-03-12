@@ -12,7 +12,8 @@
 | Persistencia (desarrollo) | En memoria (ConcurrentHashMap) |
 | Persistencia (runtime) | Azure Cosmos DB — API NoSQL (emulador Docker en desarrollo) |
 | Notificaciones | Puerto de salida fire-and-forget (email/SMS) |
-| Tests | JUnit 5 + MockMvc |
+| Tests Integracion| JUnit 5 + MockMvc |
+| Tests Unitarios| JUnit 5 |
 
 ---
 
@@ -56,18 +57,18 @@ src/main/java/btg_pactual_v1/btg_pactual_v2/
 │       ├── IServicioFondo.java
 │       └── IServicioSuscripcion.java           ← +cancelar()
 │
-├── application/                                ← Orquestación CQRS + Mediador
+├── application/                                ← Orquestación CQRS + Mediador + DTOs
 │   ├── mediador/
 │   │   ├── Manejador.java                      ← Interfaz genérica T→R
 │   │   └── Mediador.java                       ← Resuelve handler por tipo
 │   └── fondo/                                  ← Agrupado por entidad
 │       ├── command/
-│       │   ├── FondoComando.java               ← Input del command
-│       │   ├── FondoResultado.java             ← Output del command
+│       │   ├── FondoComando.java               ← Input del command (DTO de entrada)
+│       │   ├── FondoResultado.java             ← Output del command (DTO de salida)
 │       │   └── FondoManejador.java             ← Command handler
 │       └── query/
-│           ├── FondoConsulta.java              ← Input del query
-│           ├── FondoResultado.java             ← Output del query
+│           ├── FondoConsulta.java              ← Input del query (DTO de entrada)
+│           ├── FondoResultado.java             ← Output del query (DTO de salida)
 │           └── FondoManejador.java             ← Query handler
 │
 ├── infrastructure/                             ← Toda implementación de interfaces
@@ -92,22 +93,18 @@ src/main/java/btg_pactual_v1/btg_pactual_v2/
 │           └── notification/
 │               └── AdaptadorNotificacion.java  ← Nuevo: implements PuertoNotificacion (HU 2.4)
 │
-└── api/                                        ← Adaptador HTTP de entrada
+└── api/                                        ← Adaptador HTTP de entrada (sin DTOs propios)
     ├── controller/
     │   ├── ControladorFondo.java               ← Suscribir, cancelar, listar suscripciones, consultar fondo
     │   └── ControladorAutenticacion.java       ← Nuevo: registro + login (endpoints públicos)
-    ├── dto/
-    │   ├── SolicitudSuscripcion.java
-    │   ├── SolicitudCancelacion.java           ← Nuevo (HU 2.2)
-    │   ├── SolicitudRegistro.java              ← Nuevo (HU 1.1)
-    │   ├── SolicitudLogin.java                 ← Nuevo (HU 1.2)
-    │   ├── RespuestaSuscripcion.java
-    │   ├── RespuestaFondo.java
-    │   ├── RespuestaRegistro.java              ← Nuevo (HU 1.1)
-    │   ├── RespuestaLogin.java                 ← Nuevo (HU 1.2)
-    │   └── RespuestaSuscripcionVigente.java    ← Nuevo (HU 2.3)
     └── handler/
         └── ManejadorExcepcionesGlobal.java     ← Extendido: +401, +403, +409
+
+    ⚠️ NOTA: Los DTOs de entrada y salida (Comandos, Consultas, Resultados) viven en
+    la capa de aplicación, NO en api/dto/. Los controladores reciben directamente los
+    objetos de comando/consulta de aplicación como @RequestBody y retornan los
+    Resultados de aplicación. Esto permite que los manejadores CQRS tomen decisiones
+    directamente sobre los DTOs sin depender de la capa API.
 ```
 
 ---
@@ -224,7 +221,7 @@ HTTP Request + Authorization: Bearer {token}
                                         ├─► PuertoRepositorioSuscripcion → guarda la suscripción
                                         ├─► PuertoNotificacion.enviar() (fire-and-forget, HU 2.4)
                                         └─► FondoResultado (command)
-                        └─► ControladorFondo mapea a RespuestaSuscripcion
+                        └─► ControladorFondo retorna FondoResultado (command)
 HTTP Response 201
 ```
 
@@ -276,7 +273,7 @@ HTTP Request + Authorization: Bearer {token}
                                 └─► IServicioFondo → ServicioFondo
                                         └─► PuertoRepositorioFondo
                                                 └─► FondoResultado (query)
-                        └─► ControladorFondo mapea a RespuestaFondo
+                        └─► ControladorFondo retorna FondoResultado (query)
 HTTP Response 200
 ```
 
@@ -297,9 +294,10 @@ HTTP Response 200
 - Patrón **CQRS** organizado por entidad de dominio
 - `Manejador<T,R>` — interfaz genérica que todo handler implementa
 - `Mediador` — resuelve automáticamente el handler según el tipo de solicitud enviada
-- Comandos: `FondoComando`, `RegistroComando`, `LoginComando`, `CancelacionComando`
-- Consultas: `FondoConsulta`, `SuscripcionesVigentesConsulta`
-- Resultados: `FondoResultado`, `RegistroResultado`, `LoginResultado`, `CancelacionResultado`
+- Comandos (DTOs de entrada): `FondoComando`, `RegistroComando`, `LoginComando`, `CancelacionComando`
+- Consultas (DTOs de entrada): `FondoConsulta`, `SuscripcionesVigentesConsulta`
+- Resultados (DTOs de salida): `FondoResultado`, `RegistroResultado`, `LoginResultado`, `CancelacionResultado`
+- **TODOS los DTOs viven aquí** — los controladores de API reciben y retornan directamente estos objetos. La capa de aplicación es autosuficiente: los manejadores CQRS toman decisiones directamente sobre los DTOs de entrada sin depender de transformaciones de la capa API
 - **No conoce** el modelo de dominio ni infraestructura
 
 ### Infraestructura
@@ -312,13 +310,12 @@ HTTP Response 200
 - **Conoce** dominio y aplicación
 
 ### API
-- Controladores REST que reciben DTOs, invocan el `Mediador` y retornan respuesta HTTP
+- Controladores REST **delgados** que reciben objetos de aplicación (Comandos/Consultas) directamente como @RequestBody, invocan el `Mediador` y retornan Resultados de aplicación como respuesta HTTP
 - `ControladorFondo` — suscripción, cancelación, consulta de fondos y suscripciones vigentes
 - `ControladorAutenticacion` — registro y login (endpoints públicos)
-- DTOs de entrada: `SolicitudSuscripcion`, `SolicitudCancelacion`, `SolicitudRegistro`, `SolicitudLogin`
-- DTOs de salida: `RespuestaSuscripcion`, `RespuestaFondo`, `RespuestaRegistro`, `RespuestaLogin`, `RespuestaSuscripcionVigente`
+- **No tiene DTOs propios** — usa directamente los Comandos, Consultas y Resultados de la capa de aplicación
 - `ManejadorExcepcionesGlobal` — traduce `ExcepcionDominio` a HTTP 422, validaciones a 400, auth a 401/403, duplicados a 409
-- **Solo conoce** el Mediador y los objetos de comando/consulta de la capa de aplicación
+- **Solo conoce** el Mediador y los objetos de comando/consulta/resultado de la capa de aplicación
 
 ---
 
@@ -681,9 +678,9 @@ DESPUÉS (correcto):
 
 `Cliente.descontarSaldo()` lanza el mensaje `"No tiene saldo disponible para vincularse al fondo. Saldo actual: X"` sin incluir el nombre del fondo. La regla de negocio documentada requiere que el mensaje identifique a qué fondo se intentó vincular.
 
-#### IMPORTANTE — clienteId explícito en SolicitudSuscripcion
+#### IMPORTANTE — clienteId explícito en FondoComando
 
-`SolicitudSuscripcion` recibe `clienteId` como campo del body. Con la implementación de JWT (HU 1.3), el `clienteId` debe extraerse del token para garantizar aislamiento de datos. El DTO no debería exponer este campo.
+`FondoComando` recibe `clienteId` como campo del body. Con la implementación de JWT (HU 1.3), el `clienteId` debe extraerse del token para garantizar aislamiento de datos. El Comando no debería exponer este campo.
 
 #### MENOR — ManejadorExcepcionesGlobal incompleto
 
@@ -741,13 +738,13 @@ Solo maneja `ExcepcionDominio → 422` y `MethodArgumentNotValidException → 40
 | `AdaptadorNotificacionEmail` | `adapter/out/notification/` | 2.4 |
 | `AdaptadorNotificacionSms` | `adapter/out/notification/` | 2.4 |
 
-#### API (4 DTOs nuevos + 1 controlador)
+#### API (1 controlador nuevo — sin DTOs propios)
 
 | Componente | HU |
 |---|---|
 | `ControladorAutenticacion` | 1.1, 1.2 |
-| `SolicitudRegistro`, `SolicitudLogin`, `SolicitudCancelacion` | 1.1, 1.2, 2.2 |
-| `RespuestaRegistro`, `RespuestaLogin`, `RespuestaSuscripcionVigente` | 1.1, 1.2, 2.3 |
+
+⚠️ **Nota:** Los DTOs de entrada (`RegistroComando`, `LoginComando`, `CancelacionComando`) y salida (`RegistroResultado`, `LoginResultado`) viven en la **capa de aplicación**, no en `api/dto/`. Los controladores reciben directamente los Comandos/Consultas como @RequestBody y retornan los Resultados de aplicación.
 
 #### Dependencias faltantes en build.gradle
 
