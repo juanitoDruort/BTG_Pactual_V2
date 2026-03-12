@@ -1,5 +1,7 @@
 package btg_pactual_v1.btg_pactual_v2.domain.model;
 
+import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionDominio;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
@@ -22,6 +24,16 @@ public class Suscripcion {
         this.monto = monto;
         this.estado = estado;
         this.fechaSuscripcion = fechaSuscripcion;
+    }
+
+    public BigDecimal cancelar(String nombreFondo) {
+        if (this.estado != Estado.ACTIVO) {
+            throw new ExcepcionDominio(
+                "No se puede cancelar el " + nombreFondo + " ya que no esta activo dentro de su portafolio"
+            );
+        }
+        this.estado = Estado.CANCELADO;
+        return this.monto;
     }
 
     public String getId() { return id; }

@@ -38,6 +38,7 @@ src/main/java/btg_pactual_v1/btg_pactual_v2/
 │   ├── registro/       ← Command: registro de usuarios
 │   ├── login/          ← Command: autenticación
 │   ├── desbloqueo/     ← Command: desbloqueo de cuentas
+│   ├── cancelacion/    ← Command: cancelación de suscripciones
 │   └── fondo/          ← Command + Query: operaciones de fondos
 ├── infrastructure/     ← Implementaciones de interfaces
 │   ├── config/         ← SecurityConfig
@@ -45,7 +46,7 @@ src/main/java/btg_pactual_v1/btg_pactual_v2/
 │   ├── service/        ← ServicioSuscripcion, ServicioFondo
 │   └── adapter/out/    ← Adaptadores de persistencia y notificaciones
 └── api/                ← Adaptador HTTP de entrada
-    ├── controller/     ← ControladorAutenticacion, ControladorFondo, ControladorAdmin
+    ├── controller/     ← ControladorAutenticacion, ControladorFondo, ControladorSuscripcion, ControladorAdmin
     ├── dto/            ← Records de solicitud/respuesta HTTP
     └── handler/        ← ManejadorExcepcionesGlobal
 ```
@@ -139,10 +140,13 @@ API Docs JSON: `http://localhost:8080/api-docs`
 # build/reports/tests/test/index.html
 ```
 
-**54 tests** distribuidos en:
+**78 tests** distribuidos en:
 
-- **Tests unitarios**: modelo de dominio (`ClienteTest`), manejadores de aplicación (`RegistroManejadorTest`, `LoginManejadorTest`, `DesbloqueoManejadorTest`), seguridad (`JwtProveedorTest`)
-- **Tests E2E (integración)**: `ControladorAutenticacionE2ETest`, `ControladorFondoE2ETest`, `ControladorAdminE2ETest` — levantan contexto Spring completo con MockMvc y seguridad real
+- **Tests unitarios de dominio**: `ClienteTest` (7), `SuscripcionTest` (2)
+- **Tests unitarios de aplicación**: `RegistroManejadorTest` (4), `LoginManejadorTest` (5), `DesbloqueoManejadorTest` (2), `CancelacionManejadorTest` (2)
+- **Tests unitarios de infraestructura**: `JwtProveedorTest` (5), `AdaptadorEncriptacionAesTest` (7), `ServicioSuscripcionTest` (4)
+- **Tests E2E (integración)**: `ControladorAutenticacionE2ETest` (9), `ControladorFondoE2ETest` (19), `ControladorAdminE2ETest` (3), `ControladorSuscripcionE2ETest` (8) — levantan contexto Spring completo con MockMvc y seguridad real
+- **Context load**: `BtgPactualV2ApplicationTests` (1)
 
 ## Ejemplo de uso
 
@@ -186,11 +190,62 @@ curl -X POST http://localhost:8080/api/fondos/suscribir \
   }'
 ```
 
+### 4. Cancelar una suscripción
+
+```bash
+curl -X POST http://localhost:8080/api/suscripciones/<suscripcionId>/cancelar \
+  -H "Authorization: Bearer eyJ..."
+# Respuesta: { "suscripcionId": "...", "estado": "CANCELADO", "monto": 75000, ... }
+# El monto se devuelve automáticamente al saldo del cliente
+```
+
+### 5. Consultar fondos disponibles
+
+```bash
+curl http://localhost:8080/api/fondos/fondo-1 \
+  -H "Authorization: Bearer eyJ..."
+```
+
+## Reglas de negocio principales
+
+| Regla | Detalle |
+|---|---|
+| Saldo mínimo inicial | $500.000 al registrarse |
+| Monto mínimo por fondo | Cada fondo define su monto mínimo de suscripción |
+| Sin duplicados | Un cliente no puede tener dos suscripciones ACTIVAS al mismo fondo |
+| Re-suscripción | Permitida tras cancelar la suscripción anterior |
+| Devolución al cancelar | El monto se abona automáticamente al saldo del cliente |
+| Aislamiento de datos | Un cliente solo puede operar sobre sus propios datos (BOLA prevention) |
+| Contraseña segura | Mínimo 5 caracteres, debe incluir números, letras y caracteres especiales |
+| Bloqueo automático | 3 intentos fallidos de login → cuenta bloqueada |
+| Encriptación en reposo | Saldos encriptados con AES-256-GCM; contraseñas hasheadas con BCrypt |
+
 ## Documentación
 
-- [ARQUITECTURA.md](ARQUITECTURA.md) — Arquitectura detallada, estructura de carpetas, flujo de solicitudes
+- [ARQUITECTURA.md](ARQUITECTURA.md) — Arquitectura detallada, estructura de carpetas, flujo de solicitudes, reglas de negocio completas
 - [docs/architecture/](docs/architecture/) — Estándares de código, flujo de autenticación, seguridad JWT
-- [docs/stories/](docs/stories/) — Historias de usuario del proyecto
+- [docs/stories/](docs/stories/) — Historias de usuario del proyecto (9 HUs definidas)
+
+## Historias de usuario
+
+| Épica | HU | Descripción | Estado |
+|---|---|---|---|
+| **Seguridad** | 1.1 | Registro de usuarios con modelo de credenciales | ✅ Implementada |
+| | 1.2 | Autenticación JWT con política de bloqueo | ✅ Implementada |
+| | 1.3 | Autorización por roles y aislamiento de datos | ✅ Implementada |
+| | 1.4 | Encriptación de datos sensibles en reposo (AES-256) | ✅ Implementada |
+| **Fondos** | 2.1 | Suscripción a fondo de inversión | ✅ Implementada |
+| | 2.2 | Cancelación de suscripción a fondo | ✅ Implementada |
+| | 2.3 | Consulta de suscripciones vigentes | Analizada |
+| | 2.4 | Notificación email/SMS al suscribir | Analizada |
+| **Datos** | 3 | Modelo de datos Azure Cosmos DB | Analizada |
+
+## Consulta SQL complementaria
+
+El archivo [Respuesta_SQL.txt](Respuesta_SQL.txt) contiene un script SQL Server con:
+- Creación de tablas (Cliente, Sucursal, Producto, Inscripcion, Disponibilidad, Visitan)
+- Datos de prueba
+- Consulta con CTEs para encontrar clientes cuyos productos inscritos están disponibles en **todas** las sucursales que visitan
 
 ## Estructura del proyecto
 

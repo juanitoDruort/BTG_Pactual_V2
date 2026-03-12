@@ -7,4 +7,6 @@ import java.math.BigDecimal;
 public interface IServicioSuscripcion {
 
     Suscripcion suscribir(String clienteId, String fondoId, BigDecimal monto);
+
+    Suscripcion cancelar(String suscripcionId, String clienteId);
 }

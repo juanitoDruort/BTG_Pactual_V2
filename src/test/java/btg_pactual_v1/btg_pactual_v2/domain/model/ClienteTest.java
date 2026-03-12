@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.math.BigDecimal;
+
 class ClienteTest {
 
     @Test
@@ -84,5 +86,18 @@ class ClienteTest {
         // Assert
         assertFalse(cliente.estaBloqueada());
         assertEquals(0, cliente.getIntentosFallidosLogin());
+    }
+
+    @Test
+    @DisplayName("abonarSaldo — suma monto al saldo existente")
+    void abonarSaldo() {
+        // Arrange
+        Cliente cliente = new ClienteBuilder().conSaldo(new BigDecimal("425000")).build();
+
+        // Act
+        cliente.abonarSaldo(new BigDecimal("75000"));
+
+        // Assert
+        assertEquals(new BigDecimal("500000"), cliente.getSaldo());
     }
 }

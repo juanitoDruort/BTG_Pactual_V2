@@ -1,5 +1,6 @@
 package btg_pactual_v1.btg_pactual_v2.infrastructure.service;
 
+import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionAccesoDenegado;
 import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionDominio;
 import btg_pactual_v1.btg_pactual_v2.domain.model.Cliente;
 import btg_pactual_v1.btg_pactual_v2.domain.model.Fondo;
@@ -59,5 +60,29 @@ public class ServicioSuscripcion implements IServicioSuscripcion {
                 Suscripcion.Estado.ACTIVO,
                 LocalDateTime.now()
         ));
+    }
+
+    @Override
+    public Suscripcion cancelar(String suscripcionId, String clienteId) {
+        Suscripcion suscripcion = repositorioSuscripcion.buscarPorId(suscripcionId)
+                .orElseThrow(() -> new ExcepcionDominio("Suscripción no encontrada: " + suscripcionId));
+
+        if (!suscripcion.getClienteId().equals(clienteId)) {
+            throw new ExcepcionAccesoDenegado("No tiene permisos para cancelar esta suscripción");
+        }
+
+        Fondo fondo = repositorioFondo.buscarPorId(suscripcion.getFondoId())
+                .orElseThrow(() -> new ExcepcionDominio("Fondo no encontrado: " + suscripcion.getFondoId()));
+
+        BigDecimal montoDevuelto = suscripcion.cancelar(fondo.getNombre());
+
+        Cliente cliente = repositorioCliente.buscarPorId(clienteId)
+                .orElseThrow(() -> new ExcepcionDominio("Cliente no encontrado: " + clienteId));
+        cliente.abonarSaldo(montoDevuelto);
+
+        repositorioCliente.guardar(cliente);
+        repositorioSuscripcion.guardar(suscripcion);
+
+        return suscripcion;
     }
 }
