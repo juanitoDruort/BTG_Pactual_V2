@@ -327,55 +327,331 @@ El archivo [Respuesta_SQL.txt](Respuesta_SQL.txt) contiene un script SQL Server 
 
 ## Despliegue en AWS EC2 con Docker
 
-### Prerrequisitos EC2
+### Arquitectura de Despliegue
 
-- Instancia EC2 (Amazon Linux 2 o Ubuntu) con acceso SSH
-- Security Group configurado (ver tabla abajo)
-- Credenciales AWS IAM con permisos DynamoDB
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        AWS Cloud                                │
+│                                                                 │
+│  ┌──────────────────────────────────────┐                       │
+│  │        EC2 Instance                  │                       │
+│  │  ┌────────────────────────────────┐  │                       │
+│  │  │   Docker Container             │  │                       │
+│  │  │  ┌──────────────────────────┐  │  │                       │
+│  │  │  │  Spring Boot App         │  │  │   ┌───────────────┐  │
+│  │  │  │  (JRE 24 runtime)       │──┼──┼──▶│ AWS DynamoDB  │  │
+│  │  │  │  Puerto 8080            │  │  │   │ (us-east-1)   │  │
+│  │  │  └──────────────────────────┘  │  │   └───────────────┘  │
+│  │  └────────────────────────────────┘  │                       │
+│  │                                      │                       │
+│  │  Security Group:                     │                       │
+│  │  - TCP 8080 (HTTP) ← Internet       │                       │
+│  │  - TCP 22 (SSH) ← Admin IP          │                       │
+│  └──────────────────────────────────────┘                       │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+          ▲
+          │ HTTP :8080
+          │
+    ┌─────┴─────┐
+    │  Cliente   │
+    │  externo   │
+    └───────────┘
+```
 
-### Security Group - Reglas Requeridas
+**Diferencia con entorno local:** En local se usa DynamoDB Local (Docker, puerto 8000) con credenciales ficticias. En EC2 la app se conecta al servicio AWS DynamoDB real (endpoint regional) con credenciales IAM, y no se levanta contenedor de base de datos.
 
-| Tipo | Protocolo | Puerto | Origen | Descripción |
-|------|-----------|--------|--------|-------------|
-| Inbound | TCP | 8080 | 0.0.0.0/0 | HTTP - API REST |
-| Inbound | TCP | 22 | Mi IP | SSH - Administración |
-| Outbound | All | All | 0.0.0.0/0 | Conexión a DynamoDB y registros Docker |
+---
 
-### Pasos de despliegue
+### Prerrequisitos
+
+#### 1. Instancia EC2
+
+- **Tipo recomendado**: `t2.micro` (Free Tier) o `t3.small`
+- **SO**: Amazon Linux 2 o Ubuntu 20.04+
+- **Almacenamiento**: Mínimo 8 GB (para Docker + imagen)
+- **Key Pair**: Creado y `.pem` descargado para acceso SSH
+- **IP pública**: Asignada (Elastic IP recomendada para persistencia)
+
+#### 2. Credenciales AWS IAM
+
+Usuario IAM con **permisos mínimos requeridos** para DynamoDB:
+
+```
+dynamodb:CreateTable
+dynamodb:DescribeTable
+dynamodb:PutItem
+dynamodb:GetItem
+dynamodb:Query
+dynamodb:Scan
+dynamodb:DeleteItem
+dynamodb:UpdateItem
+```
+
+> Generar Access Key / Secret Key desde la consola AWS IAM.
+
+#### 3. Security Group
+
+Crear un Security Group en la VPC de la instancia EC2 con estas reglas:
+
+| Dirección | Tipo | Protocolo | Puerto | Origen | Descripción |
+|-----------|------|-----------|--------|--------|-------------|
+| **Inbound** | Custom TCP | TCP | 8080 | `0.0.0.0/0` | API REST — acceso público |
+| **Inbound** | SSH | TCP | 22 | `Mi IP/32` | SSH — restringir a tu IP |
+| **Outbound** | All traffic | All | All | `0.0.0.0/0` | Conexión a DynamoDB, Docker Hub |
+
+> **Importante**: Restringir SSH (puerto 22) únicamente a tu IP pública para mayor seguridad.
+
+---
+
+### Archivos de Despliegue
+
+| Archivo | Descripción |
+|---------|-------------|
+| `Dockerfile` | Build multi-stage: JDK 24 compila → JRE 24 ejecuta. Imagen final sin código fuente |
+| `docker-compose.ec2.yml` | Compose para EC2: solo servicio `app` (sin DynamoDB Local) |
+| `application-ec2.properties` | Perfil Spring que interpola variables de entorno `${VARIABLE}` |
+| `.env.ec2.template` | Template con placeholders — commitear al repo |
+| `.env.ec2` | Variables reales — **NUNCA commitear** (excluido en `.gitignore`) |
+| `deploy-ec2.sh` | Script automatizado: instala Docker, clona repo, construye y levanta |
+
+---
+
+### Dockerfile Multi-Stage
+
+El `Dockerfile` usa un build en dos etapas para minimizar el tamaño de la imagen final:
+
+```
+Etapa 1 (build):     eclipse-temurin:24-jdk
+  └── Copia Gradle wrapper + build.gradle
+  └── Descarga dependencias (capa cacheada)
+  └── Copia src/ y ejecuta: gradlew bootJar
+
+Etapa 2 (runtime):   eclipse-temurin:24-jre
+  └── Instala curl (para healthcheck)
+  └── Crea usuario no-root (appuser)
+  └── Copia solo el JAR desde etapa 1
+  └── Ejecuta: java -XX:MaxRAMPercentage=75.0 -jar app.jar
+```
+
+**Características de seguridad:**
+- Se ejecuta como usuario no-root (`appuser`)
+- La imagen final no contiene código fuente, Gradle ni JDK
+- `MaxRAMPercentage=75.0` limita el heap al 75% de la RAM del contenedor
+
+---
+
+### Variables de Entorno
+
+Todas las variables sensibles se externalizan mediante el archivo `.env.ec2`. La app las consume a través del perfil Spring `ec2` (`application-ec2.properties`) que interpola `${VARIABLE}`.
+
+#### Referencia completa de variables
+
+| Variable | Descripción | Ejemplo |
+|----------|-------------|---------|
+| `SPRING_PROFILES_ACTIVE` | Perfil Spring Boot activo | `ec2` (no modificar) |
+| `JWT_SECRET` | Secreto para firmar tokens JWT (HMAC-SHA256) | Generar con `openssl rand -base64 48` |
+| `JWT_EXPIRATION_MS` | Duración del token en milisegundos | `300000` (5 min) |
+| `JWT_MAX_FAILED_ATTEMPTS` | Intentos fallidos antes de bloqueo | `3` |
+| `AES_KEY` | Clave AES-256 en Base64 (32 bytes) | Generar con `openssl rand -base64 32` |
+| `DYNAMODB_ENDPOINT` | Endpoint regional de DynamoDB | `https://dynamodb.us-east-1.amazonaws.com` |
+| `DYNAMODB_REGION` | Región AWS | `us-east-1` |
+| `DYNAMODB_ACCESS_KEY` | AWS Access Key ID (IAM) | `AKIA...` |
+| `DYNAMODB_SECRET_KEY` | AWS Secret Access Key (IAM) | `wJalr...` |
+
+#### Cómo funciona la externalización
+
+```
+.env.ec2                          application-ec2.properties          Clase Java
+─────────                         ──────────────────────────          ──────────
+JWT_SECRET=abc123        →        jwt.secret=${JWT_SECRET}     →     @Value("${jwt.secret}")
+AES_KEY=base64key        →        encriptacion.clave-aes=${AES_KEY} → @Value("${encriptacion.clave-aes}")
+DYNAMODB_ENDPOINT=https://...  →  dynamodb.endpoint=${DYNAMODB_ENDPOINT} → @Value("${dynamodb.endpoint}")
+```
+
+**Ningún archivo Java requiere cambios** — Spring Boot resuelve la cadena automáticamente.
+
+---
+
+### Despliegue Paso a Paso
+
+#### Opción A: Despliegue Automático (Recomendado)
+
+El script `deploy-ec2.sh` automatiza todo el proceso:
 
 ```bash
 # 1. Conectarse a la instancia EC2
 ssh -i mi-key.pem ec2-user@<IP_PUBLICA>
 
-# 2. Clonar el repositorio
+# 2. Instalar Git (si no está disponible)
+# Amazon Linux 2:
+sudo yum install -y git
+# Ubuntu:
+sudo apt-get install -y git
+
+# 3. Clonar el repositorio
 git clone https://github.com/juanitoDruort/BTG_Pactual_V2.git
 cd BTG_Pactual_V2
 
-# 3. Crear archivo de variables de entorno
+# 4. Crear y configurar variables de entorno
+cp .env.ec2.template .env.ec2
+nano .env.ec2
+# → Reemplazar TODOS los valores REEMPLAZAR_CON_* con valores reales
+
+# 5. Ejecutar el script de despliegue
+chmod +x deploy-ec2.sh
+./deploy-ec2.sh
+```
+
+**El script realiza automáticamente:**
+
+1. **Instala Docker** — Detecta el SO (Amazon Linux 2 / Ubuntu) e instala Docker + habilita servicio
+2. **Instala Docker Compose** — Descarga el binario v2.29.1 si no existe
+3. **Clona/actualiza el repositorio** — Si ya existe hace `git pull`
+4. **Valida `.env.ec2`** — Verifica que exista y no contenga placeholders sin reemplazar
+5. **Construye imagen Docker** — Ejecuta el build multi-stage
+6. **Levanta contenedores** — `docker-compose -f docker-compose.ec2.yml up -d --build`
+7. **Health check** — Reintenta hasta 15 veces (cada 10s) verificando que la app responda
+8. **Muestra resultado** — IP pública, URL de la API y Swagger UI
+
+#### Opción B: Despliegue Manual
+
+```bash
+# 1. Conectarse a EC2
+ssh -i mi-key.pem ec2-user@<IP_PUBLICA>
+
+# 2. Instalar Docker (Amazon Linux 2)
+sudo yum update -y
+sudo yum install -y docker git
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo usermod -aG docker $USER
+# Cerrar sesión y reconectar para aplicar grupo docker
+exit
+ssh -i mi-key.pem ec2-user@<IP_PUBLICA>
+
+# 3. Instalar Docker Compose
+sudo curl -L "https://github.com/docker/compose/releases/download/v2.29.1/docker-compose-$(uname -s)-$(uname -m)" \
+  -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
+
+# 4. Clonar repositorio y configurar
+git clone https://github.com/juanitoDruort/BTG_Pactual_V2.git
+cd BTG_Pactual_V2
 cp .env.ec2.template .env.ec2
 nano .env.ec2  # completar con valores reales
 
-# 4. Opción A: Despliegue automático con script
-chmod +x deploy-ec2.sh
-./deploy-ec2.sh
-
-# 4. Opción B: Despliegue manual
+# 5. Construir y levantar
 docker-compose -f docker-compose.ec2.yml up -d --build
 
-# 5. Verificar
+# 6. Verificar logs
+docker logs -f btg-pactual-v2
+
+# 7. Verificar que la app responda
 curl http://localhost:8080/swagger-ui.html
 ```
 
-### Archivos de configuración EC2
+---
 
-| Archivo | Descripción |
-|---------|-------------|
-| `Dockerfile` | Multi-stage: JDK 24 (build) → JRE 24 (runtime) |
-| `docker-compose.ec2.yml` | Compose para EC2 (solo app, sin DynamoDB Local) |
-| `src/main/resources/application-ec2.properties` | Perfil Spring con interpolación `${ENV_VAR}` |
-| `.env.ec2.template` | Template de variables de entorno (valores placeholder) |
-| `.env.ec2` | Variables reales (NO commitear, excluido en .gitignore) |
-| `deploy-ec2.sh` | Script automatizado de despliegue |
+### Demo en Vivo (EC2)
+
+> **⚠️ La IP de la instancia EC2 es dinámica** — puede cambiar si la instancia se detiene y reinicia. La URL actual es válida mientras la instancia esté corriendo.
+
+**Swagger UI (pruebas directas desde el navegador):**
+
+http://3.144.178.143:8080/swagger-ui/index.html
+
+Desde Swagger UI se pueden probar todos los endpoints interactivamente: registro, login, suscripción, cancelación y consultas.
+
+**Endpoints de ejemplo:**
+
+| Endpoint | URL directa |
+|----------|-------------|
+| Swagger UI | http://3.144.178.143:8080/swagger-ui/index.html |
+| Registro | http://3.144.178.143:8080/api/auth/registro |
+| Login | http://3.144.178.143:8080/api/auth/login |
+| API Docs (JSON) | http://3.144.178.143:8080/api-docs |
+
+---
+
+### Verificación del Despliegue
+
+Una vez levantado, verificar desde la máquina local (reemplazar `<IP_PUBLICA_EC2>` con la IP actual):
+
+```bash
+# Health check básico
+curl http://<IP_PUBLICA_EC2>:8080/swagger-ui/index.html
+
+# Verificar API - Registro de usuario
+curl -X POST http://<IP_PUBLICA_EC2>:8080/api/auth/registro \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nombre": "Test EC2",
+    "email": "test@ec2.com",
+    "telefono": "3001234567",
+    "documentoIdentidad": "CC987654321",
+    "contrasena": "Test1!",
+    "saldoInicial": 500000
+  }'
+
+# Verificar API - Login
+curl -X POST http://<IP_PUBLICA_EC2>:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "test@ec2.com", "contrasena": "Test1!"}'
+```
+
+**Swagger UI** disponible en: `http://<IP_PUBLICA_EC2>:8080/swagger-ui/index.html`
+
+---
+
+### Comandos Útiles en EC2
+
+```bash
+# Ver estado del contenedor
+docker ps
+
+# Ver logs en tiempo real
+docker logs -f btg-pactual-v2
+
+# Reiniciar la aplicación
+docker-compose -f docker-compose.ec2.yml restart
+
+# Reconstruir y redesplegar (tras git pull)
+docker-compose -f docker-compose.ec2.yml up -d --build
+
+# Detener la aplicación
+docker-compose -f docker-compose.ec2.yml down
+
+# Ver uso de recursos
+docker stats btg-pactual-v2
+
+# Inspeccionar el healthcheck
+docker inspect --format='{{json .State.Health}}' btg-pactual-v2
+```
+
+---
+
+### Troubleshooting
+
+| Problema | Causa probable | Solución |
+|----------|----------------|----------|
+| `Connection refused` al acceder :8080 | Security Group no permite TCP 8080 | Agregar regla Inbound TCP 8080 desde `0.0.0.0/0` |
+| App no arranca — error DynamoDB | Credenciales AWS inválidas o sin permisos | Verificar `DYNAMODB_ACCESS_KEY` y `DYNAMODB_SECRET_KEY` en `.env.ec2`. Validar permisos IAM |
+| `docker: command not found` | Docker no instalado | Ejecutar `deploy-ec2.sh` o instalar Docker manualmente |
+| `.env.ec2 contiene placeholders` | No se editó el template | `nano .env.ec2` y reemplazar valores `REEMPLAZAR_CON_*` |
+| `Container exits immediately` | Error en configuración | `docker logs btg-pactual-v2` para ver stack trace |
+| Build falla por memoria | Instancia con poca RAM | Usar `t3.small` (2 GB) o agregar swap: `sudo fallocate -l 2G /swapfile` |
+| Tablas DynamoDB no se crean | Permisos `CreateTable` faltantes | Agregar `dynamodb:CreateTable` y `dynamodb:DescribeTable` al usuario IAM |
+
+---
+
+### Notas de Seguridad
+
+- **Secretos**: El archivo `.env.ec2` con valores reales **nunca** se commitea al repositorio (excluido en `.gitignore`)
+- **Solo el template** `.env.ec2.template` (con placeholders) está en el repositorio
+- **El contenedor** se ejecuta como usuario no-root (`appuser`)
+- **No se usa HTTPS** — este despliegue es para demostración/prueba técnica. En producción se requeriría un load balancer (ALB) con certificado SSL o un reverse proxy (nginx) con Let's Encrypt
+- **Credenciales IAM**: En producción se recomienda usar IAM Roles asociados a la instancia EC2 en lugar de access key/secret key
 
 ## Estructura del proyecto
 
