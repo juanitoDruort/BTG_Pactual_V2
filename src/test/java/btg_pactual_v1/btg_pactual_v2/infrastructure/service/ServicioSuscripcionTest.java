@@ -1,6 +1,7 @@
 package btg_pactual_v1.btg_pactual_v2.infrastructure.service;
 
 import btg_pactual_v1.btg_pactual_v2.builder.ClienteBuilder;
+import btg_pactual_v1.btg_pactual_v2.builder.FondoBuilder;
 import btg_pactual_v1.btg_pactual_v2.builder.SuscripcionBuilder;
 import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionAccesoDenegado;
 import btg_pactual_v1.btg_pactual_v2.domain.exception.ExcepcionDominio;
@@ -134,6 +135,53 @@ class ServicioSuscripcionTest {
             "No se puede cancelar el FPV_BTG_PACTUAL_RECAUDADORA ya que no esta activo dentro de su portafolio",
             ex.getMessage()
         );
+    }
+
+    @Test
+    @DisplayName("cancelar — fondo no encontrado lanza ExcepcionDominio")
+    void cancelarFondoNoEncontrado() {
+        // Arrange
+        Suscripcion suscripcion = new SuscripcionBuilder()
+                .conId("sus-1")
+                .conClienteId("cliente-1")
+                .conFondoId("fondo-inexistente")
+                .conEstado(Suscripcion.Estado.ACTIVO)
+                .build();
+
+        when(repositorioSuscripcion.buscarPorId("sus-1")).thenReturn(Optional.of(suscripcion));
+        when(repositorioFondo.buscarPorId("fondo-inexistente")).thenReturn(Optional.empty());
+
+        // Act & Assert
+        ExcepcionDominio ex = assertThrows(ExcepcionDominio.class,
+                () -> servicio.cancelar("sus-1", "cliente-1"));
+        assertEquals("Fondo no encontrado: fondo-inexistente", ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("cancelar — cliente no encontrado lanza ExcepcionDominio")
+    void cancelarClienteNoEncontrado() {
+        // Arrange
+        Suscripcion suscripcion = new SuscripcionBuilder()
+                .conId("sus-1")
+                .conClienteId("cliente-1")
+                .conFondoId("fondo-1")
+                .conMonto(new BigDecimal("75000"))
+                .conEstado(Suscripcion.Estado.ACTIVO)
+                .build();
+
+        Fondo fondo = new FondoBuilder()
+                .conId("fondo-1")
+                .conNombre("FPV_BTG_PACTUAL_RECAUDADORA")
+                .build();
+
+        when(repositorioSuscripcion.buscarPorId("sus-1")).thenReturn(Optional.of(suscripcion));
+        when(repositorioFondo.buscarPorId("fondo-1")).thenReturn(Optional.of(fondo));
+        when(repositorioCliente.buscarPorId("cliente-1")).thenReturn(Optional.empty());
+
+        // Act & Assert
+        ExcepcionDominio ex = assertThrows(ExcepcionDominio.class,
+                () -> servicio.cancelar("sus-1", "cliente-1"));
+        assertEquals("Cliente no encontrado: cliente-1", ex.getMessage());
     }
 
     // ──────────────────────────────────────────────────────────────────────────
