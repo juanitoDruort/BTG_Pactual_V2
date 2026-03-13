@@ -45,3 +45,10 @@ out/
 
 # Método Ceiba - Auto-injected agent skills
 .github/skills/
+
+.claude/*
+
+### Secretos de entorno ###
+.env.ec2
+*.env
+!.env.ec2.template

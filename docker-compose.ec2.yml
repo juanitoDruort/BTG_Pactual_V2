@@ -1,0 +1,24 @@
+# ============================================================
+# Docker Compose - Despliegue EC2
+# ============================================================
+# Uso: docker-compose -f docker-compose.ec2.yml up -d --build
+# Requiere: .env.ec2 con valores reales (copiar de .env.ec2.template)
+# ============================================================
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: btg-pactual-v2
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env.ec2
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/swagger-ui.html"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s

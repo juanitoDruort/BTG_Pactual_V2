@@ -316,6 +316,7 @@ curl http://localhost:8080/api/fondos/fondo-1 \
 | | 2.3 | Consulta de suscripciones vigentes | ✅ Implementada |
 | | 2.4 | Notificación email/SMS al suscribir | ✅ Implementada |
 | **Datos** | 3 | Modelo de datos DynamoDB (tablas + adaptadores + semilla) | ✅ Implementada |
+| **Infraestructura** | 4 | Despliegue AWS EC2 con Docker | ✅ Implementada |
 
 ## Consulta SQL complementaria
 
@@ -323,6 +324,58 @@ El archivo [Respuesta_SQL.txt](Respuesta_SQL.txt) contiene un script SQL Server 
 - Creación de tablas (Cliente, Sucursal, Producto, Inscripcion, Disponibilidad, Visitan)
 - Datos de prueba
 - Consulta con CTEs para encontrar clientes cuyos productos inscritos están disponibles en **todas** las sucursales que visitan
+
+## Despliegue en AWS EC2 con Docker
+
+### Prerrequisitos EC2
+
+- Instancia EC2 (Amazon Linux 2 o Ubuntu) con acceso SSH
+- Security Group configurado (ver tabla abajo)
+- Credenciales AWS IAM con permisos DynamoDB
+
+### Security Group - Reglas Requeridas
+
+| Tipo | Protocolo | Puerto | Origen | Descripción |
+|------|-----------|--------|--------|-------------|
+| Inbound | TCP | 8080 | 0.0.0.0/0 | HTTP - API REST |
+| Inbound | TCP | 22 | Mi IP | SSH - Administración |
+| Outbound | All | All | 0.0.0.0/0 | Conexión a DynamoDB y registros Docker |
+
+### Pasos de despliegue
+
+```bash
+# 1. Conectarse a la instancia EC2
+ssh -i mi-key.pem ec2-user@<IP_PUBLICA>
+
+# 2. Clonar el repositorio
+git clone https://github.com/juanitoDruort/BTG_Pactual_V2.git
+cd BTG_Pactual_V2
+
+# 3. Crear archivo de variables de entorno
+cp .env.ec2.template .env.ec2
+nano .env.ec2  # completar con valores reales
+
+# 4. Opción A: Despliegue automático con script
+chmod +x deploy-ec2.sh
+./deploy-ec2.sh
+
+# 4. Opción B: Despliegue manual
+docker-compose -f docker-compose.ec2.yml up -d --build
+
+# 5. Verificar
+curl http://localhost:8080/swagger-ui.html
+```
+
+### Archivos de configuración EC2
+
+| Archivo | Descripción |
+|---------|-------------|
+| `Dockerfile` | Multi-stage: JDK 24 (build) → JRE 24 (runtime) |
+| `docker-compose.ec2.yml` | Compose para EC2 (solo app, sin DynamoDB Local) |
+| `src/main/resources/application-ec2.properties` | Perfil Spring con interpolación `${ENV_VAR}` |
+| `.env.ec2.template` | Template de variables de entorno (valores placeholder) |
+| `.env.ec2` | Variables reales (NO commitear, excluido en .gitignore) |
+| `deploy-ec2.sh` | Script automatizado de despliegue |
 
 ## Estructura del proyecto
 
