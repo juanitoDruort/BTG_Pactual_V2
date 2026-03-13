@@ -9,11 +9,11 @@
 | Build | Gradle 9.3.1 |
 | Documentación API | SpringDoc OpenAPI 3.0.2 |
 | Seguridad | Spring Security + JWT (stateless) |
-| Persistencia (desarrollo) | En memoria (ConcurrentHashMap) |
-| Persistencia (runtime) | Azure Cosmos DB — API NoSQL (emulador Docker en desarrollo) |
+| Persistencia | Amazon DynamoDB (AWS SDK v2 + Enhanced Client, DynamoDB Local en Docker) |
 | Notificaciones | Puerto de salida fire-and-forget (email/SMS) |
-| Tests Integracion| JUnit 5 + MockMvc |
-| Tests Unitarios| JUnit 5 |
+| Tests E2E | JUnit 5 + MockMvc + Testcontainers (DynamoDB Local) |
+| Tests Integración | JUnit 5 + Testcontainers (DynamoDB Local) |
+| Tests Unitarios| JUnit 5 + Mockito |
 
 ---
 
@@ -73,7 +73,10 @@ src/main/java/btg_pactual_v1/btg_pactual_v2/
 │
 ├── infrastructure/                             ← Toda implementación de interfaces
 │   ├── config/
-│   │   └── SecurityConfig.java                 ← Configuración Spring Security + JWT
+│   │   ├── SecurityConfig.java                 ← Configuración Spring Security + JWT
+│   │   ├── ConfiguracionDynamoDb.java          ← Beans DynamoDbClient + DynamoDbEnhancedClient
+│   │   ├── EsquemaDynamoDb.java                ← Esquema de 3 tablas centralizado
+│   │   └── InicializadorTablasDynamoDb.java    ← Creación de tablas + datos semilla
 │   ├── security/
 │   │   ├── JwtFiltroAutenticacion.java         ← Filtro que valida Bearer token en cada request
 │   │   ├── JwtProveedor.java                   ← Genera y valida tokens JWT
@@ -84,19 +87,22 @@ src/main/java/btg_pactual_v1/btg_pactual_v2/
 │   └── adapter/
 │       └── out/
 │           ├── persistence/
-│           │   ├── AdaptadorFondoEnMemoria.java
-│           │   ├── AdaptadorClienteEnMemoria.java
-│           │   ├── AdaptadorSuscripcionEnMemoria.java
-│           │   ├── AdaptadorFondoCosmosDb.java      ← Nuevo: Cosmos DB (HU 3)
-│           │   ├── AdaptadorClienteCosmosDb.java     ← Nuevo: Cosmos DB (HU 3)
-│           │   └── AdaptadorSuscripcionCosmosDb.java  ← Nuevo: Cosmos DB (HU 3)
+│           │   ├── AdaptadorClienteDynamoDb.java     ← DynamoDB (HU 3)
+│           │   ├── AdaptadorFondoDynamoDb.java       ← DynamoDB (HU 3)
+│           │   ├── AdaptadorSuscripcionDynamoDb.java ← DynamoDB (HU 3)
+│           │   └── dynamodb/                         ← Modelos de mapeo DynamoDB
+│           │       ├── ClienteDynamoDb.java
+│           │       ├── FondoDynamoDb.java
+│           │       └── SuscripcionDynamoDb.java
 │           └── notification/
 │               └── AdaptadorNotificacion.java  ← Nuevo: implements PuertoNotificacion (HU 2.4)
 │
 └── api/                                        ← Adaptador HTTP de entrada (sin DTOs propios)
     ├── controller/
-    │   ├── ControladorFondo.java               ← Suscribir, cancelar, listar suscripciones, consultar fondo
-    │   └── ControladorAutenticacion.java       ← Nuevo: registro + login (endpoints públicos)
+    │   ├── ControladorFondo.java               ← Suscribir fondo y consultar fondo por ID
+    │   ├── ControladorSuscripcion.java         ← Cancelar suscripción y listar vigentes
+    │   ├── ControladorAutenticacion.java       ← Registro + login (endpoints públicos)
+    │   └── ControladorAdmin.java               ← Desbloqueo de cuentas (ADMINISTRADOR)
     └── handler/
         └── ManejadorExcepcionesGlobal.java     ← Extendido: +401, +403, +409
 
@@ -230,7 +236,7 @@ HTTP Response 201
 ```
 HTTP Request + Authorization: Bearer {token}
     └─► SecurityFilterChain → JwtFiltroAutenticacion → valida token
-        └─► ControladorFondo
+        └─► ControladorSuscripcion
                 │  crea CancelacionComando(suscripcionId, clienteId del token)
                 └─► Mediador.enviar(CancelacionComando)
                         └─► CancelacionManejador.manejar(CancelacionComando)
@@ -251,7 +257,7 @@ HTTP Response 200
 ```
 HTTP Request + Authorization: Bearer {token}
     └─► SecurityFilterChain → JwtFiltroAutenticacion → valida token → extrae userId
-        └─► ControladorFondo
+        └─► ControladorSuscripcion
                 │  crea SuscripcionesVigentesConsulta(clienteId del token)
                 └─► Mediador.enviar(SuscripcionesVigentesConsulta)
                         └─► SuscripcionesVigentesManejador.manejar(...)
@@ -303,16 +309,18 @@ HTTP Response 200
 ### Infraestructura
 - **Única capa** que implementa interfaces y manipula el modelo de dominio
 - `ServicioX` — contiene la lógica de negocio llamando repositorios
-- `AdaptadorXEnMemoria` — implementación en memoria (dev/test)
-- `AdaptadorXCosmosDb` — implementación Cosmos DB (producción, HU 3)
-- `AdaptadorNotificacionEmail` / `AdaptadorNotificacionSms` — implementación del puerto de notificación (HU 2.4)
+- `AdaptadorXDynamoDb` — implementación DynamoDB (AWS SDK v2 Enhanced Client)
+- Modelos de mapeo DynamoDB: `ClienteDynamoDb`, `FondoDynamoDb`, `SuscripcionDynamoDb` — DTOs de persistencia con `fromDomain()`/`toDomain()`
+- `AdaptadorNotificacion` — implementación del puerto de notificación (HU 2.4)
 - **Seguridad**: `JwtFiltroAutenticacion`, `JwtProveedor`, `DetallesUsuarioServicio`, `SecurityConfig` (HU 1.1-1.3)
 - **Conoce** dominio y aplicación
 
 ### API
 - Controladores REST **delgados** que reciben objetos de aplicación (Comandos/Consultas) directamente como @RequestBody, invocan el `Mediador` y retornan Resultados de aplicación como respuesta HTTP
-- `ControladorFondo` — suscripción, cancelación, consulta de fondos y suscripciones vigentes
+- `ControladorFondo` — suscripción a fondos y consulta de fondo por ID
+- `ControladorSuscripcion` — cancelación de suscripciones y consulta de vigentes
 - `ControladorAutenticacion` — registro y login (endpoints públicos)
+- `ControladorAdmin` — desbloqueo de cuentas (ADMINISTRADOR)
 - **No tiene DTOs propios** — usa directamente los Comandos, Consultas y Resultados de la capa de aplicación
 - `ManejadorExcepcionesGlobal` — traduce `ExcepcionDominio` a HTTP 422, validaciones a 400, auth a 401/403, duplicados a 409
 - **Solo conoce** el Mediador y los objetos de comando/consulta/resultado de la capa de aplicación
@@ -397,8 +405,8 @@ Cliente {
 
 | ID | Nombre | Email | Saldo | Rol |
 |---|---|---|---|---|
-| cliente-1 | Juan Rodriguez | juan@correo.com | $500.000 | CLIENTE |
-| cliente-2 | Maria Lopez | maria@correo.com | $1.000.000 | CLIENTE |
+| cliente-1 | Juan Rodriguez | juan.rodriguez@email.com | $500.000 (encriptado) | CLIENTE |
+| cliente-2 | Maria Lopez | maria.lopez@email.com | $1.000.000 (encriptado) | CLIENTE |
 
 ---
 
@@ -550,26 +558,27 @@ Cliente {
 
 ---
 
-## Cobertura de Tests E2E
+## Cobertura de Tests
+
+**Total: 107 tests, 0 failures** (25 suites)
 
 ```
-src/test/.../ControladorFondoE2ETest.java  — 13 tests
-│
-├── POST /api/fondos/suscribir
-│   ├── ✓ 201 - suscripción exitosa
-│   ├── ✓ 400 - clienteId vacío
-│   ├── ✓ 400 - fondoId vacío
-│   ├── ✓ 400 - monto negativo
-│   ├── ✓ 422 - fondo no existe
-│   ├── ✓ 422 - cliente no existe
-│   ├── ✓ 422 - monto menor al mínimo
-│   ├── ✓ 422 - saldo insuficiente
-│   └── ✓ 422 - cliente ya vinculado al fondo
-│
-└── GET /api/fondos/{fondoId}
-    ├── ✓ 200 - fondo existe
-    ├── ✓ 200 - todos los fondos precargados consultables
-    └── ✓ 422 - fondo no existe
+Tests E2E (DynamoDB Local vía Testcontainers):
+├── ControladorAutenticacionE2ETest.java — 8 tests (registro, login, bloqueo)
+├── ControladorFondoE2ETest.java — 22 tests (suscripción, consulta, JWT, BOLA, notificación)
+├── ControladorAdminE2ETest.java — 5 tests (desbloqueo, roles)
+├── ControladorSuscripcionE2ETest.java — 11 tests (cancelación, vigentes)
+
+Tests unitarios (Mockito):
+├── RegistroManejadorTest.java — 5 tests
+├── LoginManejadorTest.java — 7 tests
+├── DesbloqueoManejadorTest.java — 3 tests
+├── ClienteTest.java — 11 tests
+
+Tests integración DynamoDB (Testcontainers):
+├── AdaptadorClienteDynamoDbTest.java — 6 tests
+├── AdaptadorFondoDynamoDbTest.java — 2 tests
+└── AdaptadorSuscripcionDynamoDbTest.java — 6 tests
 ```
 
 ---
@@ -612,9 +621,9 @@ src/test/.../ControladorFondoE2ETest.java  — 13 tests
 ┌────────────────────▼────────────────────────────┐
 │               INFRASTRUCTURE                    │
 │  ServicioX         implements IServicioX        │
-│  AdaptadorXEnMemoria  implements PuertoX (dev)  │
-│  AdaptadorXCosmosDb   implements PuertoX (prod) │
-│  AdaptadorNotificacionX  implements PuertoNot.  │
+│  AdaptadorXDynamoDb   implements PuertoX        │
+│  ClienteDynamoDb/FondoDynamoDb/SuscripcionDynamoDb│
+│  AdaptadorNotificacion   implements PuertoNot.   │
 │  JwtProveedor, DetallesUsuarioServicio          │
 └─────────────────────────────────────────────────┘
 
@@ -628,115 +637,63 @@ Regla: las flechas van hacia abajo. Ninguna capa
 
 ## Deuda Técnica y Estado de Implementación
 
-> **Fecha del análisis:** 12 de marzo de 2026
-> **Código base:** 28 archivos Java (26 main + 2 test) · 2 endpoints · 13 tests E2E
+> **Fecha del análisis:** 13 de marzo de 2026
+> **Código base:** 40+ archivos Java · 7 endpoints · 107 tests (E2E + integración + unitarios)
 
 ### Resumen ejecutivo
 
-El código actual implementa únicamente la **suscripción a fondos (HU 2.1)** y la consulta de fondos.
-Las 8 historias restantes (seguridad, cancelación, listado, notificaciones, Cosmos DB) están documentadas
-en esta arquitectura pero **no tienen implementación**. Adicionalmente existen **2 violaciones arquitectónicas
-críticas** en el código existente que deben corregirse antes de avanzar.
+El código implementa **todas las historias de usuario** (HU 1.1–1.4, 2.1–2.4, 3). La persistencia usa
+Amazon DynamoDB Local como única implementación. Los tests E2E y de integración usan Testcontainers.
 
 ### Cobertura por Historia de Usuario
 
 | HU | Descripción | Estado | % |
 |---|---|---|---|
-| 1.1 | Registro de usuarios y modelo de credenciales | No implementado | 0% |
-| 1.2 | Autenticación JWT y política de bloqueo | No implementado | 0% |
-| 1.3 | Autorización por roles y aislamiento de datos | No implementado | 0% |
-| 1.4 | Encriptación de datos sensibles en reposo | No implementado | 0% |
-| 2.1 | Suscripción a fondo de inversión | **Implementado** (parcial — sin JWT ni notificación) | 70% |
-| 2.2 | Cancelación de suscripción | No implementado | 0% |
-| 2.3 | Consulta de suscripciones vigentes | No implementado | 0% |
-| 2.4 | Notificación email/SMS | No implementado | 0% |
-| 3 | Modelo de datos Cosmos DB | No implementado | 0% |
+| 1.1 | Registro de usuarios y modelo de credenciales | **Implementado** | 100% |
+| 1.2 | Autenticación JWT y política de bloqueo | **Implementado** | 100% |
+| 1.3 | Autorización por roles y aislamiento de datos | **Implementado** | 100% |
+| 1.4 | Encriptación de datos sensibles en reposo | **Implementado** | 100% |
+| 2.1 | Suscripción a fondo de inversión | **Implementado** | 100% |
+| 2.2 | Cancelación de suscripción | **Implementado** | 100% |
+| 2.3 | Consulta de suscripciones vigentes | **Implementado** | 100% |
+| 2.4 | Notificación email/SMS | **Implementado** | 100% |
+| 3 | Modelo de datos DynamoDB | **Implementado** | 100% |
 
-### Violaciones arquitectónicas activas
+### Violaciones arquitectónicas — Resueltas
 
-#### CRÍTICA — Dominio depende de la capa de Aplicación
+Todas las violaciones arquitectónicas detectadas en el análisis inicial han sido corregidas:
 
-Las interfaces de servicio en el dominio importan directamente clases de la capa `application`:
+- ✅ **Dominio ya no depende de la capa de Aplicación** — Las interfaces de servicio usan modelos de dominio como parámetros
+- ✅ **Mensaje de saldo incluye nombre del fondo** — `Cliente.descontarSaldo(monto, nombreFondo)`
+- ✅ **clienteId se extrae del JWT** — Aislamiento de datos implementado (prevención BOLA)
+- ✅ **ManejadorExcepcionesGlobal completo** — Maneja 400, 401, 403, 409, 422
+- ✅ **Tests E2E con seguridad** — Todos usan `@WithMockUser` o tokens JWT reales
 
-| Archivo | Importación indebida | Regla violada |
+### Componentes implementados (HU 3 — DynamoDB)
+
+#### Infraestructura — Persistencia DynamoDB
+
+| Componente | Paquete | Descripción |
 |---|---|---|
-| `domain/service/IServicioSuscripcion.java` | `application.fondo.command.FondoComando` y `FondoResultado` | Dominio NO conoce aplicación |
-| `domain/service/IServicioFondo.java` | `application.fondo.query.FondoConsulta` y `FondoResultado` | Dominio NO conoce aplicación |
+| `ConfiguracionDynamoDb` | `config/` | Beans `DynamoDbClient` + `DynamoDbEnhancedClient` |
+| `EsquemaDynamoDb` | `config/` | Creación centralizada de 3 tablas con GSIs |
+| `InicializadorTablasDynamoDb` | `config/` | `@PostConstruct` — crea tablas + datos semilla (encriptados) |
+| `AdaptadorClienteDynamoDb` | `adapter/out/persistence/` | PK: id, GSI: email-index. Encripta/desencripta saldo |
+| `AdaptadorFondoDynamoDb` | `adapter/out/persistence/` | PK: id. Catálogo inmutable |
+| `AdaptadorSuscripcionDynamoDb` | `adapter/out/persistence/` | PK: clienteId, SK: id, GSI: id-index. Denormaliza nombreFondo |
+| `ClienteDynamoDb` | `adapter/out/persistence/dynamodb/` | DTO de mapeo con `fromDomain()`/`toDomain()` |
+| `FondoDynamoDb` | `adapter/out/persistence/dynamodb/` | DTO de mapeo con `fromDomain()`/`toDomain()` |
+| `SuscripcionDynamoDb` | `adapter/out/persistence/dynamodb/` | DTO de mapeo con `fromDomain()`/`toDomain()` |
 
-**Corrección requerida:** Las interfaces de dominio deben definir sus propios tipos de entrada/salida (o usar modelos de dominio). Los handlers de aplicación realizan el mapeo entre objetos de aplicación y objetos de dominio.
+#### Tests — DynamoDB (Testcontainers)
 
-```
-ANTES (violación):
-  domain/IServicioSuscripcion → importa application/FondoComando
-  
-DESPUÉS (correcto):
-  domain/IServicioSuscripcion → usa domain/model/* como parámetros
-  application/FondoManejador  → mapea FondoComando → parámetros de dominio
-```
-
-#### IMPORTANTE — Mensaje de saldo insuficiente no incluye nombre del fondo
-
-`Cliente.descontarSaldo()` lanza el mensaje `"No tiene saldo disponible para vincularse al fondo. Saldo actual: X"` sin incluir el nombre del fondo. La regla de negocio documentada requiere que el mensaje identifique a qué fondo se intentó vincular.
-
-#### IMPORTANTE — clienteId explícito en FondoComando
-
-`FondoComando` recibe `clienteId` como campo del body. Con la implementación de JWT (HU 1.3), el `clienteId` debe extraerse del token para garantizar aislamiento de datos. El Comando no debería exponer este campo.
-
-#### MENOR — ManejadorExcepcionesGlobal incompleto
-
-Solo maneja `ExcepcionDominio → 422` y `MethodArgumentNotValidException → 400`. Cuando se implemente seguridad, debe extenderse con:
-- `401 Unauthorized` — token ausente, inválido o expirado
-- `403 Forbidden` — cuenta bloqueada o sin permisos
-- `409 Conflict` — email duplicado en registro
-
-#### MENOR — Tests E2E sin configuración de seguridad
-
-`ControladorFondoE2ETest` usa `MockMvc` sin Spring Security. Al agregar `spring-boot-starter-security`, los tests fallarán porque todos los endpoints quedarán protegidos por defecto. Se requiere configurar `@WithMockUser` o inyectar tokens de prueba.
-
-### Componentes faltantes por capa
-
-#### Dominio (4 componentes nuevos)
-
-| Componente | Tipo | HU |
-|---|---|---|
-| Campos extendidos en `Cliente` (email, teléfono, documento, hash, rol, bloqueo, intentos, fecha) | Modelo | 1.1 |
-| `Rol` (CLIENTE \| ADMINISTRADOR) | Enum | 1.1, 1.3 |
-| `PuertoNotificacion` | Interfaz puerto de salida | 2.4 |
-| `PuertoEncriptacion` | Interfaz puerto de salida | 1.4 |
-
-#### Puertos — métodos faltantes
-
-| Puerto existente | Método faltante | HU |
-|---|---|---|
-| `PuertoRepositorioCliente` | `existePorEmail(String email)` | 1.1 |
-| `PuertoRepositorioCliente` | `buscarPorEmail(String email)` | 1.2 |
-| `PuertoRepositorioSuscripcion` | `buscarPorId(String id)` | 2.2 |
-| `PuertoRepositorioSuscripcion` | `buscarPorClienteIdYEstado(String clienteId, Estado estado)` | 2.3 |
-| `IServicioSuscripcion` | `cancelar(...)` | 2.2 |
-| `Cliente` | `abonarSaldo(BigDecimal monto)` | 2.2 |
-
-#### Aplicación (4 handlers nuevos)
-
-| Comando/Consulta | Manejador | HU |
-|---|---|---|
-| `RegistroComando` | `RegistroManejador` | 1.1 |
-| `LoginComando` | `LoginManejador` | 1.2 |
-| `CancelacionComando` | `CancelacionManejador` | 2.2 |
-| `SuscripcionesVigentesConsulta` | `SuscripcionesVigentesManejador` | 2.3 |
-
-#### Infraestructura (9+ componentes nuevos)
-
-| Componente | Paquete | HU |
-|---|---|---|
-| `JwtFiltroAutenticacion` | `security/` | 1.2 |
-| `JwtProveedor` | `security/` | 1.2 |
-| `DetallesUsuarioServicio` | `security/` | 1.2 |
-| `SecurityConfig` | `config/` | 1.2, 1.3 |
-| `AdaptadorClienteCosmosDb` | `adapter/out/persistence/` | 3 |
-| `AdaptadorFondoCosmosDb` | `adapter/out/persistence/` | 3 |
-| `AdaptadorSuscripcionCosmosDb` | `adapter/out/persistence/` | 3 |
-| `AdaptadorNotificacionEmail` | `adapter/out/notification/` | 2.4 |
-| `AdaptadorNotificacionSms` | `adapter/out/notification/` | 2.4 |
+| Componente | Descripción |
+|---|---|
+| `E2ETestBase` | Base abstracta con Testcontainers singleton + `@DynamicPropertySource` + reinicio por test |
+| `DynamoDbIntegrationTestBase` | Base para tests unitarios de adaptadores DynamoDB |
+| `AdaptadorClienteDynamoDbTest` | 6 tests de integración |
+| `AdaptadorFondoDynamoDbTest` | 2 tests de integración |
+| `AdaptadorSuscripcionDynamoDbTest` | 6 tests de integración |
 
 #### API (1 controlador nuevo — sin DTOs propios)
 

@@ -1,11 +1,11 @@
 # Flujo de Autenticación, Autorización por Roles y Aislamiento de Datos
 
-> **Fecha:** 2025-07-22 (actualizado 2025-07-23 — HU 1.3)  
+> **Fecha:** 2025-07-22 (actualizado 2025-07-23 — HU 1.3, 2025-07-24 — HU 3)  
 > **Dominio:** Seguridad — Autenticación, Autorización RBAC, Política de Bloqueo y Aislamiento de Datos  
 > **Stack:** Java 24 · Spring Boot 4.0.3 · Spring Security · JJWT 0.12.6  
 > **Patrón base:** Arquitectura Hexagonal + CQRS + Mediador  
 > **Tipo de flujo:** Síncrono (sin operaciones asíncronas)  
-> **Integraciones externas:** Ninguna (adaptadores en memoria)
+> **Integraciones externas:** AWS DynamoDB Local (persistencia vía AdaptadorClienteDynamoDb)
 
 ---
 
@@ -39,7 +39,7 @@ Este documento describe los flujos de negocio del módulo de autenticación y au
 | `Cliente` | Dominio (`domain/model/`) | Entidad raíz con estado de bloqueo (`bloqueada`, `intentosFallidosLogin`) y métodos de negocio. |
 | `JwtFiltroAutenticacion` | Infraestructura (`infrastructure/security/`) | `OncePerRequestFilter` que extrae, valida y establece el `SecurityContext` desde el token Bearer. |
 | `JwtProveedor` | Infraestructura (`infrastructure/security/`) | Implementa `PuertoGenerarToken`. Genera tokens JWT (HMAC-SHA256) y extrae claims. |
-| `PuertoRepositorioCliente` | Dominio (`domain/port/out/`) | Puerto de salida para persistencia de clientes. Métodos: `buscarPorEmail()`, `buscarPorId()`, `guardar()`. |
+| `PuertoRepositorioCliente` | Dominio (`domain/port/out/`) | Puerto de salida para persistencia de clientes. Métodos: `buscarPorEmail()`, `buscarPorId()`, `guardar()`. Implementado por `AdaptadorClienteDynamoDb` con DynamoDB Local. |
 | `PuertoHashContrasena` | Dominio (`domain/port/out/`) | Puerto de salida para verificación de hash de contraseña (BCrypt). |
 | `PuertoGenerarToken` | Dominio (`domain/port/out/`) | Puerto de salida para generación de tokens JWT. |
 | `ManejadorExcepcionesGlobal` | API (`api/handler/`) | Traduce excepciones de dominio/aplicación a respuestas HTTP con códigos de estado apropiados. |

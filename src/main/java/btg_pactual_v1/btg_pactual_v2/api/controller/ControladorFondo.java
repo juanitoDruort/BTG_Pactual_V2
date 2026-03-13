@@ -1,11 +1,8 @@
 package btg_pactual_v1.btg_pactual_v2.api.controller;
 
-import btg_pactual_v1.btg_pactual_v2.api.dto.RespuestaFondo;
-import btg_pactual_v1.btg_pactual_v2.api.dto.RespuestaSuscripcion;
-import btg_pactual_v1.btg_pactual_v2.api.dto.SolicitudSuscripcion;
 import btg_pactual_v1.btg_pactual_v2.application.fondo.command.FondoComando;
-import btg_pactual_v1.btg_pactual_v2.application.fondo.query.FondoConsulta;
 import btg_pactual_v1.btg_pactual_v2.application.fondo.command.FondoResultado;
+import btg_pactual_v1.btg_pactual_v2.application.fondo.query.FondoConsulta;
 import btg_pactual_v1.btg_pactual_v2.application.mediador.Mediador;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -33,33 +30,21 @@ public class ControladorFondo {
 
     @PostMapping("/suscribir")
     @Operation(summary = "Suscribir cliente a un fondo (Command)")
-    public ResponseEntity<RespuestaSuscripcion> suscribir(@RequestBody @Valid SolicitudSuscripcion solicitud,
-                                                          Authentication auth) {
-        String clienteId = resolverClienteId(auth, solicitud.clienteId());
+    public ResponseEntity<FondoResultado> suscribir(@RequestBody @Valid FondoComando comando,
+                                                    Authentication auth) {
+        String clienteId = resolverClienteId(auth, comando.clienteId());
         FondoResultado resultado = mediador.enviar(
-                new FondoComando(clienteId, solicitud.fondoId(), solicitud.monto())
+                new FondoComando(clienteId, comando.fondoId(), comando.monto())
         );
-        return ResponseEntity.status(HttpStatus.CREATED).body(new RespuestaSuscripcion(
-                resultado.suscripcionId(),
-                resultado.clienteId(),
-                resultado.fondoId(),
-                resultado.monto(),
-                resultado.estado(),
-                resultado.fechaSuscripcion()
-        ));
+        return ResponseEntity.status(HttpStatus.CREATED).body(resultado);
     }
 
     @GetMapping("/{fondoId}")
     @Operation(summary = "Consultar fondo por ID (Query)")
-    public ResponseEntity<RespuestaFondo> obtenerFondo(@PathVariable String fondoId) {
+    public ResponseEntity<btg_pactual_v1.btg_pactual_v2.application.fondo.query.FondoResultado> obtenerFondo(@PathVariable String fondoId) {
         btg_pactual_v1.btg_pactual_v2.application.fondo.query.FondoResultado resultado =
                 mediador.enviar(new FondoConsulta(fondoId));
-        return ResponseEntity.ok(new RespuestaFondo(
-                resultado.id(),
-                resultado.nombre(),
-                resultado.montoMinimo(),
-                resultado.categoria()
-        ));
+        return ResponseEntity.ok(resultado);
     }
 
     private String resolverClienteId(Authentication auth, String clienteIdBody) {

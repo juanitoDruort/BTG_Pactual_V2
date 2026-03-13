@@ -43,7 +43,7 @@ boolean check(String a, String b) { ... }
 | Puerto de salida | `PuertoRepositorio*` / `Puerto*` | `PuertoRepositorioCliente`, `PuertoNotificacion` |
 | Interfaz de servicio | `IServicio*` | `IServicioSuscripcion`, `IServicioFondo` |
 | Implementación de servicio | `Servicio*` | `ServicioSuscripcion`, `ServicioFondo` |
-| Adaptador de persistencia | `Adaptador*EnMemoria` / `Adaptador*CosmosDb` | `AdaptadorClienteEnMemoria` |
+| Adaptador de persistencia | `Adaptador*DynamoDb` | `AdaptadorClienteDynamoDb` |
 | Adaptador de notificación | `AdaptadorNotificacion*` | `AdaptadorNotificacionEmail` |
 | Comando (CQRS — DTO de entrada) | `*Comando` | `FondoComando`, `RegistroComando`, `CancelacionComando` |
 | Consulta (CQRS — DTO de entrada) | `*Consulta` | `FondoConsulta`, `SuscripcionesVigentesConsulta` |
@@ -75,7 +75,9 @@ src/main/java/btg_pactual_v1/btg_pactual_v2/
 ├── api/                                    ← Sin DTOs propios
 │   ├── controller/
 │   │   ├── ControladorFondo.java
-│   │   └── ControladorAutenticacion.java
+│   │   ├── ControladorSuscripcion.java
+│   │   ├── ControladorAutenticacion.java
+│   │   └── ControladorAdmin.java
 │   └── handler/
 │       └── ManejadorExcepcionesGlobal.java
 ├── application/                            ← DTOs (Comandos/Consultas/Resultados) viven aquí

@@ -4,18 +4,14 @@ import btg_pactual_v1.btg_pactual_v2.builder.LoginComandoBuilder;
 import btg_pactual_v1.btg_pactual_v2.builder.RegistroComandoBuilder;
 import btg_pactual_v1.btg_pactual_v2.domain.model.Cliente;
 import btg_pactual_v1.btg_pactual_v2.domain.model.Rol;
-import btg_pactual_v1.btg_pactual_v2.infrastructure.adapter.out.persistence.AdaptadorClienteEnMemoria;
-import btg_pactual_v1.btg_pactual_v2.infrastructure.adapter.out.persistence.AdaptadorSuscripcionEnMemoria;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.MediaType;
@@ -35,22 +31,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Tests E2E: levanta el contexto completo de Spring una sola vez.
- * El estado de los adaptadores en memoria se reinicia en @BeforeEach
+ * Tests E2E: levanta el contexto completo de Spring con DynamoDB Local (Testcontainers).
+ * El estado de los adaptadores se reinicia en @BeforeEach (E2ETestBase)
  * para garantizar aislamiento entre tests sin reiniciar el contexto.
  */
-@SpringBootTest
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class ControladorFondoE2ETest {
+class ControladorFondoE2ETest extends E2ETestBase {
 
     @Autowired
     private WebApplicationContext contexto;
-
-    @Autowired
-    private AdaptadorClienteEnMemoria adaptadorCliente;
-
-    @Autowired
-    private AdaptadorSuscripcionEnMemoria adaptadorSuscripcion;
 
     private MockMvc mockMvc;
 
@@ -59,12 +48,6 @@ class ControladorFondoE2ETest {
     @BeforeAll
     void configurarMockMvc() {
         mockMvc = MockMvcBuilders.webAppContextSetup(contexto).apply(springSecurity()).build();
-    }
-
-    @BeforeEach
-    void reiniciarEstado() {
-        adaptadorCliente.reiniciar();
-        adaptadorSuscripcion.reiniciar();
     }
 
     // ──────────────────────────────────────────────────────────────────────────

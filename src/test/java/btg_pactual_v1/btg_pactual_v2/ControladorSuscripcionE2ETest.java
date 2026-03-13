@@ -2,17 +2,13 @@ package btg_pactual_v1.btg_pactual_v2;
 
 import btg_pactual_v1.btg_pactual_v2.builder.LoginComandoBuilder;
 import btg_pactual_v1.btg_pactual_v2.builder.RegistroComandoBuilder;
-import btg_pactual_v1.btg_pactual_v2.infrastructure.adapter.out.persistence.AdaptadorClienteEnMemoria;
-import btg_pactual_v1.btg_pactual_v2.infrastructure.adapter.out.persistence.AdaptadorSuscripcionEnMemoria;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -31,18 +27,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class ControladorSuscripcionE2ETest {
+class ControladorSuscripcionE2ETest extends E2ETestBase {
 
     @Autowired
     private WebApplicationContext contexto;
-
-    @Autowired
-    private AdaptadorClienteEnMemoria adaptadorCliente;
-
-    @Autowired
-    private AdaptadorSuscripcionEnMemoria adaptadorSuscripcion;
 
     private MockMvc mockMvc;
 
@@ -51,12 +40,6 @@ class ControladorSuscripcionE2ETest {
     @BeforeAll
     void configurarMockMvc() {
         mockMvc = MockMvcBuilders.webAppContextSetup(contexto).apply(springSecurity()).build();
-    }
-
-    @BeforeEach
-    void reiniciarEstado() {
-        adaptadorCliente.reiniciar();
-        adaptadorSuscripcion.reiniciar();
     }
 
     private String registrarYObtenerClienteId(String email, String documento) throws Exception {

@@ -11,10 +11,10 @@ API REST para gestión de fondos de inversión BTG Pactual. Permite registro y a
 | Build | Gradle 9.3.1 (Groovy DSL) |
 | Documentación API | SpringDoc OpenAPI 3.0.2 |
 | Seguridad | Spring Security + JWT (HMAC-SHA256, stateless) |
-| Persistencia (desarrollo) | En memoria (ConcurrentHashMap) |
-| Persistencia (producción) | Azure Cosmos DB — API NoSQL |
+| Persistencia | AWS DynamoDB Local (Docker) — SDK v2 Enhanced Client |
 | Tokens JWT | JJWT 0.12.6 |
-| Tests | JUnit 5 + MockMvc + spring-security-test |
+| Tests | JUnit 5 + MockMvc + Testcontainers 1.20.6 + spring-security-test |
+| Contenedores | Docker (DynamoDB Local) |
 
 ## Arquitectura
 
@@ -33,21 +33,21 @@ src/main/java/btg_pactual_v1/btg_pactual_v2/
 │   ├── model/          ← Entidades: Cliente, Fondo, Suscripcion, Rol
 │   ├── port/out/       ← Puertos de salida (interfaces)
 │   └── service/        ← Contratos de servicios de dominio
-├── application/        ← Orquestación CQRS + Mediador
+├── application/        ← Orquestación CQRS + Mediador + DTOs
 │   ├── mediador/       ← Mediador genérico (tipo → handler)
 │   ├── registro/       ← Command: registro de usuarios
 │   ├── login/          ← Command: autenticación
 │   ├── desbloqueo/     ← Command: desbloqueo de cuentas
 │   ├── cancelacion/    ← Command: cancelación de suscripciones
-│   └── fondo/          ← Command + Query: operaciones de fondos
+│   ├── fondo/          ← Command + Query: operaciones de fondos
+│   └── suscripcion/    ← Query: suscripciones vigentes
 ├── infrastructure/     ← Implementaciones de interfaces
-│   ├── config/         ← SecurityConfig
+│   ├── config/         ← SecurityConfig, ConfiguracionDynamoDb, InicializadorTablasDynamoDb
 │   ├── security/       ← JWT (proveedor, filtro, UserDetailsService)
 │   ├── service/        ← ServicioSuscripcion, ServicioFondo
-│   └── adapter/out/    ← Adaptadores de persistencia y notificaciones
-└── api/                ← Adaptador HTTP de entrada
+│   └── adapter/out/    ← Adaptadores DynamoDB y notificaciones
+└── api/                ← Adaptador HTTP de entrada (sin DTOs propios)
     ├── controller/     ← ControladorAutenticacion, ControladorFondo, ControladorSuscripcion, ControladorAdmin
-    ├── dto/            ← Records de solicitud/respuesta HTTP
     └── handler/        ← ManejadorExcepcionesGlobal
 ```
 
@@ -55,14 +55,79 @@ src/main/java/btg_pactual_v1/btg_pactual_v2/
 
 - **Java 24** (configurado en `build.gradle` via toolchain)
 - **Gradle 9.3.1** (incluido via wrapper `gradlew`)
+- **Docker** (para DynamoDB Local)
+
+## Levantar DynamoDB Local con Docker
+
+La aplicación requiere una instancia de DynamoDB Local corriendo en el puerto 8000.
+
+### Paso a paso
+
+**1. Verificar que Docker esté corriendo:**
+
+```bash
+docker info
+```
+
+**2. Levantar DynamoDB Local con docker-compose:**
+
+```bash
+docker-compose up -d
+```
+
+Esto usa el archivo `docker-compose.yml` del proyecto que ejecuta:
+- Imagen: `amazon/dynamodb-local:latest`
+- Puerto: `8000` (mapeado a `localhost:8000`)
+- Modo: `-sharedDb` (base de datos compartida)
+
+**3. Verificar que DynamoDB Local esté corriendo:**
+
+```bash
+# Linux/Mac
+curl -s http://localhost:8000 -X POST \
+  -H "X-Amz-Target: DynamoDB_20120810.ListTables" \
+  -H "Content-Type: application/x-amz-json-1.0" \
+  -d '{"Limit": 10}'
+
+# Windows PowerShell
+Invoke-RestMethod -Uri "http://localhost:8000" -Method POST `
+  -Headers @{"X-Amz-Target"="DynamoDB_20120810.ListTables"; "Content-Type"="application/x-amz-json-1.0"} `
+  -Body '{"Limit": 10}'
+```
+
+Debe retornar `{"TableNames":[]}` si es primera vez, o las tablas existentes.
+
+**4. (Opcional) Detener DynamoDB Local:**
+
+```bash
+docker-compose down
+```
+
+> **Nota:** Al iniciar la aplicación Spring Boot, las tablas (`clientes`, `fondos`, `suscripciones`) se crean automáticamente junto con datos semilla (2 clientes de prueba y 5 fondos). No se requiere configuración adicional.
+
+### Configuración de conexión
+
+Ya configurada en `application.properties`:
+
+```properties
+dynamodb.endpoint=http://localhost:8000
+dynamodb.region=us-east-1
+dynamodb.access-key=fakeMyKeyId
+dynamodb.secret-key=fakeSecretAccessKey
+```
+
+Estas credenciales son ficticias — DynamoDB Local no valida autenticación real.
 
 ## Compilar y ejecutar
 
 ```bash
-# Compilar el proyecto
+# 1. Levantar DynamoDB Local (si no está corriendo)
+docker-compose up -d
+
+# 2. Compilar el proyecto
 ./gradlew build
 
-# Ejecutar la aplicación
+# 3. Ejecutar la aplicación
 ./gradlew bootRun
 
 # Solo compilar sin ejecutar tests
@@ -130,6 +195,15 @@ API Docs JSON: `http://localhost:8080/api-docs`
 | fondo-4 | FDO-ACCIONES | $250.000 | FIC |
 | fondo-5 | FPV_BTG_PACTUAL_DINAMICA | $100.000 | FPV |
 
+## Clientes semilla (datos iniciales)
+
+| ID | Nombre | Email | Saldo |
+|---|---|---|---|
+| cliente-1 | Juan Rodriguez | juan.rodriguez@email.com | $500.000 (encriptado AES-256) |
+| cliente-2 | Maria Lopez | maria.lopez@email.com | $1.000.000 (encriptado AES-256) |
+
+> Los datos semilla se cargan automáticamente al iniciar la aplicación via `InicializadorTablasDynamoDb`. Los saldos se persisten encriptados en DynamoDB.
+
 ## Ejecutar tests
 
 ```bash
@@ -140,13 +214,16 @@ API Docs JSON: `http://localhost:8080/api-docs`
 # build/reports/tests/test/index.html
 ```
 
-**90 tests** distribuidos en:
+**107 tests** distribuidos en:
 
 - **Tests unitarios de dominio**: `ClienteTest` (7), `SuscripcionTest` (2)
 - **Tests unitarios de aplicación**: `RegistroManejadorTest` (4), `LoginManejadorTest` (5), `DesbloqueoManejadorTest` (2), `CancelacionManejadorTest` (2), `SuscripcionesVigentesManejadorTest` (4)
-- **Tests unitarios de infraestructura**: `JwtProveedorTest` (5), `AdaptadorEncriptacionAesTest` (7), `ServicioSuscripcionTest` (4), `AdaptadorSuscripcionEnMemoriaTest` (3)
-- **Tests E2E (integración)**: `ControladorAutenticacionE2ETest` (9), `ControladorFondoE2ETest` (19), `ControladorAdminE2ETest` (3), `ControladorSuscripcionE2ETest` (13) — levantan contexto Spring completo con MockMvc y seguridad real
+- **Tests unitarios de infraestructura**: `JwtProveedorTest` (5), `AdaptadorEncriptacionAesTest` (7), `ServicioSuscripcionTest` (6), `AdaptadorNotificacionConsolaTest` (2)
+- **Tests de integración DynamoDB** (Testcontainers): `AdaptadorClienteDynamoDbTest` (6), `AdaptadorFondoDynamoDbTest` (2), `AdaptadorSuscripcionDynamoDbTest` (6)
+- **Tests E2E** (MockMvc + Testcontainers): `ControladorAutenticacionE2ETest` (12), `ControladorFondoE2ETest` (16), `ControladorAdminE2ETest` (3), `ControladorSuscripcionE2ETest` (15)
 - **Context load**: `BtgPactualV2ApplicationTests` (1)
+
+> Los tests E2E y de integración usan **Testcontainers** con DynamoDB Local. Docker debe estar corriendo para ejecutar los tests.
 
 ## Ejemplo de uso
 
@@ -237,8 +314,8 @@ curl http://localhost:8080/api/fondos/fondo-1 \
 | **Fondos** | 2.1 | Suscripción a fondo de inversión | ✅ Implementada |
 | | 2.2 | Cancelación de suscripción a fondo | ✅ Implementada |
 | | 2.3 | Consulta de suscripciones vigentes | ✅ Implementada |
-| | 2.4 | Notificación email/SMS al suscribir | Analizada |
-| **Datos** | 3 | Modelo de datos Azure Cosmos DB | Analizada |
+| | 2.4 | Notificación email/SMS al suscribir | ✅ Implementada |
+| **Datos** | 3 | Modelo de datos DynamoDB (tablas + adaptadores + semilla) | ✅ Implementada |
 
 ## Consulta SQL complementaria
 
@@ -253,6 +330,7 @@ El archivo [Respuesta_SQL.txt](Respuesta_SQL.txt) contiene un script SQL Server 
 BTG_Pactual_V2/
 ├── build.gradle              ← Configuración de build y dependencias
 ├── settings.gradle           ← Nombre del proyecto
+├── docker-compose.yml        ← DynamoDB Local
 ├── gradlew / gradlew.bat    ← Gradle wrapper
 ├── ARQUITECTURA.md           ← Documentación de arquitectura
 ├── Respuesta_SQL.txt         ← Script SQL complementario
@@ -261,9 +339,9 @@ BTG_Pactual_V2/
 │   └── stories/              ← Historias de usuario
 └── src/
     ├── main/
-    │   ├── java/             ← Código fuente
+    │   ├── java/             ← Código fuente (hexagonal + CQRS)
     │   └── resources/
     │       └── application.properties
     └── test/
-        └── java/             ← Tests unitarios y de integración
+        └── java/             ← 107 tests (unitarios + integración + E2E)
 ```

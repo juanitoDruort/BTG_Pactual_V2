@@ -1,6 +1,5 @@
 package btg_pactual_v1.btg_pactual_v2.api.controller;
 
-import btg_pactual_v1.btg_pactual_v2.api.dto.RespuestaSuscripcion;
 import btg_pactual_v1.btg_pactual_v2.application.cancelacion.command.CancelacionComando;
 import btg_pactual_v1.btg_pactual_v2.application.fondo.command.FondoResultado;
 import btg_pactual_v1.btg_pactual_v2.application.mediador.Mediador;
@@ -31,18 +30,11 @@ public class ControladorSuscripcion {
 
     @PostMapping("/{id}/cancelar")
     @Operation(summary = "Cancelar suscripción a un fondo (Command)")
-    public ResponseEntity<RespuestaSuscripcion> cancelar(@PathVariable String id,
-                                                         Authentication auth) {
+    public ResponseEntity<FondoResultado> cancelar(@PathVariable String id,
+                                                   Authentication auth) {
         String clienteId = auth.getName();
         FondoResultado resultado = mediador.enviar(new CancelacionComando(id, clienteId));
-        return ResponseEntity.ok(new RespuestaSuscripcion(
-                resultado.suscripcionId(),
-                resultado.clienteId(),
-                resultado.fondoId(),
-                resultado.monto(),
-                resultado.estado(),
-                resultado.fechaSuscripcion()
-        ));
+        return ResponseEntity.ok(resultado);
     }
 
     @GetMapping("/vigentes")
